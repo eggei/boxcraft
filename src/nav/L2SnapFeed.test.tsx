@@ -1,12 +1,16 @@
 import 'fake-indexeddb/auto'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { openSceneStore, type SceneStore } from '../persistence/scene-store'
 import { SceneStoreProvider } from '../persistence/SceneStoreContext'
 import { SceneListProvider } from '../scenes/SceneListContext'
+import { SceneActionsProvider } from '../scenes/SceneActionsContext'
 import { NavProvider, useNav } from './NavContext'
 import { L2SnapFeed } from './L2SnapFeed'
+import { captureSnapshot } from '../scene/capture-snapshot'
+
+vi.mock('../scene/capture-snapshot')
 
 let n = 0
 const freshDb = () => `boxcraft-l2-${n++}`
@@ -24,10 +28,12 @@ async function setup(
   render(
     <SceneStoreProvider store={store}>
       <SceneListProvider initialScenes={initialScenes}>
-        <NavProvider>
-          <CurrentId />
-          <L2SnapFeed onStartEditing={onStartEditing} />
-        </NavProvider>
+        <SceneActionsProvider>
+          <NavProvider>
+            <CurrentId />
+            <L2SnapFeed onStartEditing={onStartEditing} />
+          </NavProvider>
+        </SceneActionsProvider>
       </SceneListProvider>
     </SceneStoreProvider>,
   )
@@ -35,6 +41,10 @@ async function setup(
 }
 
 describe('L2SnapFeed', () => {
+  beforeEach(() => {
+    vi.mocked(captureSnapshot).mockResolvedValue(null)
+  })
+
   it('defaults the current scene to the first in the list', async () => {
     const store = await openSceneStore(freshDb())
     await store.put({ id: 'a', title: 'Scene 1', source: '<p>a</p>', order: 0 })
@@ -67,9 +77,11 @@ describe('L2SnapFeed', () => {
               { id: 'c', title: 'Scene 3' },
             ]}
           >
-            <NavProvider initialState={{ level: 'L2', currentId: 'c' }}>
-              <L2SnapFeed onStartEditing={() => {}} />
-            </NavProvider>
+            <SceneActionsProvider>
+              <NavProvider initialState={{ level: 'L2', currentId: 'c' }}>
+                <L2SnapFeed onStartEditing={() => {}} />
+              </NavProvider>
+            </SceneActionsProvider>
           </SceneListProvider>
         </SceneStoreProvider>,
       )
@@ -93,6 +105,21 @@ describe('L2SnapFeed', () => {
     // a (current) and b (± 1 neighbor) are live; c is a sandboxed static preview.
     await waitFor(() => expect(screen.getAllByTitle('scene')).toHaveLength(2))
     await waitFor(() => expect(screen.getByTitle('Scene 3 preview')).toBeInTheDocument())
+  })
+
+  it('captures and persists a preview snapshot when a live item loads', async () => {
+    vi.mocked(captureSnapshot).mockResolvedValue('data:image/png;base64,captured')
+    const store = await openSceneStore(freshDb())
+    await store.put({ id: 'a', title: 'Scene 1', source: '<p>a</p>', order: 0 })
+    await setup(store, [{ id: 'a', title: 'Scene 1' }])
+
+    const frame = await screen.findByTitle('scene')
+    fireEvent.load(frame)
+
+    await waitFor(async () => {
+      const saved = await store.get('a')
+      expect(saved?.snapshot).toBe('data:image/png;base64,captured')
+    })
   })
 
   it('Start Editing calls back with the current scene id', async () => {

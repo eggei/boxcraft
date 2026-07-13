@@ -2,15 +2,21 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { useSceneList } from '../scenes/SceneListContext'
+import { useSceneActions } from '../scenes/SceneActionsContext'
 import { useNav } from './NavContext'
 import { useSceneSource } from '../persistence/use-scene-source'
+import { useSceneSnapshot } from '../persistence/use-scene-snapshot'
 import { SceneFrame } from '../scene/SceneFrame'
 import { ScenePreview } from '../scene/ScenePreview'
+import { captureSnapshot } from '../scene/capture-snapshot'
 import { liveWindowIds } from './live-window'
 import { mostVisibleId } from './most-visible'
 
 /** Live neighbors kept mounted on either side of the current scene (DESIGN.md §2). */
 const LIVE_NEIGHBORS = 1
+
+/** How often a live feed item recaptures its own preview snapshot (DESIGN.md §10). */
+const SNAPSHOT_CAPTURE_INTERVAL_MS = 4000
 
 /**
  * L2 — snap-feed (DESIGN.md §2): scroll-snap list, current scene ± neighbors
@@ -103,12 +109,47 @@ export function L2SnapFeed({ onStartEditing }: { onStartEditing: (id: string) =>
 
 function FeedItem({ id, title, live }: { id: string; title: string; live: boolean }) {
   const source = useSceneSource(id)
+  const snapshot = useSceneSnapshot(id)
+  const { saveSnapshot } = useSceneActions()
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function capture() {
+    const frame = frameRef.current
+    if (!frame) return
+    captureSnapshot(frame).then((dataUrl) => {
+      if (dataUrl) saveSnapshot(id, dataUrl)
+    })
+  }
+
+  function startCapturing() {
+    capture()
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = setInterval(capture, SNAPSHOT_CAPTURE_INTERVAL_MS)
+  }
+
+  // Stop recapturing the moment this item leaves the live window; unmounting
+  // the frame doesn't clear the interval on its own since the ref just goes null.
+  useEffect(() => {
+    if (!live && timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [live])
+
   return (
     <motion.div
       layoutId={`scene-${id}`}
       className="aspect-square w-full max-w-lg overflow-hidden rounded-xl border border-border bg-muted"
     >
-      {live ? <SceneFrame source={source ?? ''} /> : <ScenePreview source={source} title={title} />}
+      {live ? (
+        <SceneFrame source={source ?? ''} frameRef={frameRef} onLoad={startCapturing} />
+      ) : (
+        <ScenePreview source={source} snapshot={snapshot} title={title} />
+      )}
     </motion.div>
   )
 }

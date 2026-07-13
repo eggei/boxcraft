@@ -8,6 +8,8 @@ export interface Scene {
   source: string
   /** Position in the flat scene list (DESIGN.md §9/§10); lower sorts first. */
   order?: number
+  /** Cached `data:image/png` preview snapshot for L1/L2 (DESIGN.md §10). */
+  snapshot?: string
 }
 
 /**

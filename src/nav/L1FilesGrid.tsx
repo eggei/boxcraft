@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { useSceneList } from '../scenes/SceneListContext'
 import { useSceneActions } from '../scenes/SceneActionsContext'
 import { useSceneSource } from '../persistence/use-scene-source'
+import { useSceneSnapshot } from '../persistence/use-scene-snapshot'
 import { ScenePreview } from '../scene/ScenePreview'
 import { reorderIds } from '../scenes/reorder'
 
@@ -64,6 +65,7 @@ function FileCard({
   onDropOnto: () => void
 }) {
   const source = useSceneSource(id)
+  const snapshot = useSceneSnapshot(id)
   const [editing, setEditing] = useState(false)
 
   return (
@@ -84,7 +86,7 @@ function FileCard({
         aria-label={`Open ${title}`}
         className="aspect-square w-full overflow-hidden rounded-lg border border-border bg-muted"
       >
-        <ScenePreview source={source} title={title} />
+        <ScenePreview source={source} snapshot={snapshot} title={title} />
       </button>
       <div className="flex items-center justify-between gap-1">
         {editing ? (

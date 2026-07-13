@@ -20,6 +20,8 @@ interface SceneActions {
   renameScene(id: string, title: string): void
   reorder(order: string[]): void
   undoDelete(): void
+  /** Persist a freshly captured preview snapshot (DESIGN.md §10). List metadata is untouched. */
+  saveSnapshot(id: string, snapshot: string): void
   pendingDelete: PendingDelete | null
 }
 
@@ -116,9 +118,27 @@ export function SceneActionsProvider({ children }: { children: ReactNode }) {
     [store, dispatch],
   )
 
+  const saveSnapshot = useCallback(
+    (id: string, snapshot: string) => {
+      store.get(id).then((scene) => {
+        if (scene) store.put({ ...scene, snapshot })
+      })
+    },
+    [store],
+  )
+
   return (
     <SceneActionsContext.Provider
-      value={{ addScene, duplicateScene, softDeleteScene, renameScene, reorder, undoDelete, pendingDelete }}
+      value={{
+        addScene,
+        duplicateScene,
+        softDeleteScene,
+        renameScene,
+        reorder,
+        undoDelete,
+        saveSnapshot,
+        pendingDelete,
+      }}
     >
       {children}
     </SceneActionsContext.Provider>
