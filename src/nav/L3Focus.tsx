@@ -7,6 +7,7 @@ import { useSceneStore } from '../persistence/SceneStoreContext'
 import { createAutosave, type Autosave } from '../persistence/autosave'
 import { useNav } from './NavContext'
 import { SceneWorkspace } from '../scene/SceneWorkspace'
+import { SCENE_TRANSITION } from './scene-transition'
 
 /**
  * L3 — editing (DESIGN.md §2): the one scene, live, with the editor + tools.
@@ -64,7 +65,7 @@ export function L3Focus({ id }: { id: string }) {
   if (!scene) return <div className="p-4 text-muted-foreground">Loading…</div>
 
   return (
-    <motion.div layoutId={`scene-${id}`} className="flex h-full w-full flex-col">
+    <motion.div layoutId={`scene-${id}`} transition={SCENE_TRANSITION} className="flex h-full w-full flex-col">
       <div className="flex items-center gap-2 border-b border-border p-2 text-sm">
         <Button variant="ghost" size="icon-sm" aria-label="Back to feed" onClick={() => dispatch({ type: 'EXIT_EDITING' })}>
           <ArrowLeft />

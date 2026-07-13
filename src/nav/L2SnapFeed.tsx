@@ -11,6 +11,7 @@ import { ScenePreview } from '../scene/ScenePreview'
 import { captureSnapshot } from '../scene/capture-snapshot'
 import { liveWindowIds } from './live-window'
 import { mostVisibleId } from './most-visible'
+import { SCENE_TRANSITION } from './scene-transition'
 
 /** Live neighbors kept mounted on either side of the current scene (DESIGN.md §2). */
 const LIVE_NEIGHBORS = 1
@@ -143,6 +144,7 @@ function FeedItem({ id, title, live }: { id: string; title: string; live: boolea
   return (
     <motion.div
       layoutId={`scene-${id}`}
+      transition={SCENE_TRANSITION}
       className="aspect-square w-full max-w-lg overflow-hidden rounded-xl border border-border bg-muted"
     >
       {live ? (

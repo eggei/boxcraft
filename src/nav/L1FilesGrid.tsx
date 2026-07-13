@@ -8,6 +8,7 @@ import { useSceneSource } from '../persistence/use-scene-source'
 import { useSceneSnapshot } from '../persistence/use-scene-snapshot'
 import { ScenePreview } from '../scene/ScenePreview'
 import { reorderIds } from '../scenes/reorder'
+import { SCENE_TRANSITION } from './scene-transition'
 
 /**
  * L1 — files view (DESIGN.md §2): every scene as a static snapshot in a grid,
@@ -71,6 +72,7 @@ function FileCard({
   return (
     <motion.div
       layoutId={`scene-${id}`}
+      transition={SCENE_TRANSITION}
       className="group relative flex flex-col gap-1.5"
       draggable
       onDragStart={onDragStart}
