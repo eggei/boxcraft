@@ -1,11 +1,34 @@
 import 'fake-indexeddb/auto'
 import { describe, it, expect } from 'vitest'
 import { openSceneStore } from '../persistence/scene-store'
-import { loadOrCreateDefaultScene, DEFAULT_SCENE_ID, SEED_SOURCE } from './scene-bootstrap'
+import { loadOrCreateDefaultScene, loadOrCreateSceneList, DEFAULT_SCENE_ID, SEED_SOURCE } from './scene-bootstrap'
 import { insertBox } from '../box/insert-box'
 
 let n = 0
 const freshDb = () => `boxcraft-bootstrap-${n++}`
+
+describe('loadOrCreateSceneList', () => {
+  it('seeds a single starter scene, ordered first, when the store is empty', async () => {
+    const store = await openSceneStore(freshDb())
+
+    const scenes = await loadOrCreateSceneList(store)
+
+    expect(scenes).toHaveLength(1)
+    expect(scenes[0].title).toBe('Scene 1')
+    expect(scenes[0].order).toBe(0)
+    expect(await store.get(scenes[0].id)).toEqual(scenes[0])
+  })
+
+  it('returns existing scenes sorted by order, never reseeding', async () => {
+    const store = await openSceneStore(freshDb())
+    await store.put({ id: 'b', title: 'Scene 2', source: '<p>b</p>', order: 1 })
+    await store.put({ id: 'a', title: 'Scene 1', source: '<p>a</p>', order: 0 })
+
+    const scenes = await loadOrCreateSceneList(store)
+
+    expect(scenes.map((s) => s.id)).toEqual(['a', 'b'])
+  })
+})
 
 describe('loadOrCreateDefaultScene', () => {
   it('seeds and persists a default scene when the store is empty', async () => {

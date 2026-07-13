@@ -1,4 +1,5 @@
 import type { Scene, SceneStore } from '../persistence/scene-store'
+import { nextSceneTitle } from '../scenes/scene-titles'
 
 /** Phase 0 works on a single scene; multi-scene lists arrive in Phase 4. */
 export const DEFAULT_SCENE_ID = 'default'
@@ -56,4 +57,26 @@ export async function loadOrCreateDefaultScene(store: SceneStore): Promise<Scene
   }
   await store.put(seed)
   return seed
+}
+
+/**
+ * Load the flat scene list (DESIGN.md §10), ordered by `order`. Seeds a
+ * single starter scene the first time the store is empty. Existing scenes
+ * missing an `order` (pre-Phase-4 data) sort after ordered ones by id — a
+ * fresh install never hits that path.
+ */
+export async function loadOrCreateSceneList(store: SceneStore): Promise<Scene[]> {
+  const existing = await store.getAll()
+  if (existing.length > 0) {
+    return [...existing].sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity) || a.id.localeCompare(b.id))
+  }
+
+  const seed: Scene = {
+    id: crypto.randomUUID(),
+    title: nextSceneTitle([]),
+    source: SEED_SOURCE,
+    order: 0,
+  }
+  await store.put(seed)
+  return [seed]
 }

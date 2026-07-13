@@ -6,6 +6,8 @@ export interface Scene {
   id: string
   title: string
   source: string
+  /** Position in the flat scene list (DESIGN.md §9/§10); lower sorts first. */
+  order?: number
 }
 
 /**
