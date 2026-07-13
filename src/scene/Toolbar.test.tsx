@@ -29,4 +29,16 @@ describe('Toolbar', () => {
 
     expect(onToolChange).toHaveBeenCalledWith('box')
   })
+
+  it('offers an active Attach JS tool (Phase 3)', async () => {
+    const user = userEvent.setup()
+    const onToolChange = vi.fn()
+    render(<Toolbar tool="select" onToolChange={onToolChange} />)
+
+    const attach = screen.getByRole('button', { name: /attach js/i })
+    expect(attach).not.toBeDisabled()
+
+    await user.click(attach)
+    expect(onToolChange).toHaveBeenCalledWith('js')
+  })
 })

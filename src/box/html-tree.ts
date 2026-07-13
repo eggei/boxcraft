@@ -21,6 +21,10 @@ export interface ElementInfo {
   classValueTo: number | null
   /** The `class` value split into individual class names. */
   classNames: string[]
+  /** Start/end offsets of the raw `id` attribute value (inside the quotes), for
+   *  the managed id token JS attach introduces (DESIGN.md §8). Null when absent. */
+  idValueFrom: number | null
+  idValueTo: number | null
 }
 
 /** Parse the source into a flat list of elements in document order. */
@@ -33,7 +37,8 @@ export function parseElements(source: string): ElementInfo[] {
     if (!open) continue
     const tag = open.getChild('TagName')
     const close = cursor.node.getChild('CloseTag')
-    const { classValueFrom, classValueTo } = classValueRange(source, open)
+    const { from: classValueFrom, to: classValueTo } = attrValueRange(source, open, 'class')
+    const { from: idValueFrom, to: idValueTo } = attrValueRange(source, open, 'id')
     elements.push({
       tagName: tag ? source.slice(tag.from, tag.to).toLowerCase() : '',
       openFrom: open.from,
@@ -45,28 +50,31 @@ export function parseElements(source: string): ElementInfo[] {
         classValueFrom != null
           ? source.slice(classValueFrom, classValueTo!).split(/\s+/).filter(Boolean)
           : [],
+      idValueFrom,
+      idValueTo,
     })
   } while (cursor.next())
   return elements
 }
 
-/** The inner span of an element's `class` attribute value, if present. */
-function classValueRange(
+/** The inner span of a named attribute's value on an opening tag, if present. */
+function attrValueRange(
   source: string,
   open: SyntaxNode,
-): { classValueFrom: number | null; classValueTo: number | null } {
+  wanted: string,
+): { from: number | null; to: number | null } {
   for (const attr of open.getChildren('Attribute')) {
     const attrName = attr.getChild('AttributeName')
     const attrValue = attr.getChild('AttributeValue')
     if (!attrName || !attrValue) continue
-    if (source.slice(attrName.from, attrName.to) !== 'class') continue
+    if (source.slice(attrName.from, attrName.to) !== wanted) continue
     // Strip the surrounding quotes to expose just the value text.
     const raw = source.slice(attrValue.from, attrValue.to)
     const quoted = /^["']/.test(raw)
     return {
-      classValueFrom: attrValue.from + (quoted ? 1 : 0),
-      classValueTo: attrValue.to - (quoted ? 1 : 0),
+      from: attrValue.from + (quoted ? 1 : 0),
+      to: attrValue.to - (quoted ? 1 : 0),
     }
   }
-  return { classValueFrom: null, classValueTo: null }
+  return { from: null, to: null }
 }

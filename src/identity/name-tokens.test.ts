@@ -41,3 +41,52 @@ describe('locateNameTokens', () => {
     expect(tokens.some((t) => t.name === 'glow')).toBe(false)
   })
 })
+
+// A scene with JS attached: the box carries an id and the shared script wires it
+// up. box-1 also appears as an unrelated word and the derived var name, neither
+// of which is a managed token.
+const JS_SCENE = `<!doctype html>
+<html>
+  <head>
+    <style>
+      .box-1 { position: absolute; }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="box-1" id="box-1"></div>
+    </div>
+    <script>
+      const box1 = document.getElementById('box-1');
+    </script>
+  </body>
+</html>
+`
+
+describe('locateNameTokens — JS tokens (Phase 3)', () => {
+  it('locates the id attribute value of a managed box', () => {
+    const tokens = locateNameTokens(JS_SCENE, new Set(['box-1']))
+    const id = tokens.filter((t) => t.kind === 'id')
+
+    expect(id).toHaveLength(1)
+    expect(JS_SCENE.slice(id[0].from, id[0].to)).toBe('box-1')
+  })
+
+  it('locates the getElementById string argument of a managed box', () => {
+    const tokens = locateNameTokens(JS_SCENE, new Set(['box-1']))
+    const ref = tokens.filter((t) => t.kind === 'js-ref')
+
+    expect(ref).toHaveLength(1)
+    expect(JS_SCENE.slice(ref[0].from, ref[0].to)).toBe('box-1')
+    // The span is the string argument only — the derived var name is untouched.
+    expect(JS_SCENE.slice(ref[0].from - 1, ref[0].to + 1)).toBe("'box-1'")
+  })
+
+  it('does not emit the derived variable name as a managed token', () => {
+    // `box1` (the var) is user-owned and never renamed (DESIGN.md §8).
+    const tokens = locateNameTokens(JS_SCENE, new Set(['box-1']))
+    tokens.forEach((t) => expect(t.name).toBe('box-1'))
+    // Four managed occurrences: selector, class, id, js-ref.
+    expect(tokens).toHaveLength(4)
+  })
+})

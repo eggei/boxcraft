@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { renameBox } from './rename'
 
-// box-1 appears as a CSS selector and an HTML class. It also appears in a
-// script as an id string — which Phase 2 rename must NOT touch (that joins in
-// Phase 3, DESIGN.md §8).
+// box-1 appears as a CSS selector, an HTML class, an HTML id, and a
+// getElementById string argument. With JS attached, rename rewrites all four
+// atomically (DESIGN.md §8). The derived variable name `box1` is user-owned and
+// must stay put.
 const SCENE = `<!doctype html>
 <html>
   <head>
@@ -16,7 +17,7 @@ const SCENE = `<!doctype html>
       <div class="box-1" id="box-1"></div>
     </div>
     <script>
-      const b = document.getElementById('box-1');
+      const box1 = document.getElementById('box-1');
     </script>
   </body>
 </html>
@@ -39,19 +40,28 @@ describe('renameBox', () => {
     expect(source).toContain('class="hero"')
   })
 
-  it('leaves the JS id and getElementById string untouched (Phase 3 scope)', () => {
+  it('rewrites the JS id and getElementById string too (Phase 3)', () => {
     const { source } = renameBox(SCENE, 'box-1', 'hero')
 
-    // Only class + selector changed; the id attribute and the script keep box-1.
-    expect(source).toContain('id="box-1"')
-    expect(source).toContain("getElementById('box-1')")
+    expect(source).toContain('id="hero"')
+    expect(source).toContain("getElementById('hero')")
+    // No box-1 occurrence survives as a managed token.
+    expect(source).not.toContain('id="box-1"')
+    expect(source).not.toContain("getElementById('box-1')")
+  })
+
+  it('leaves the auto-derived variable name untouched (user-owned)', () => {
+    const { source } = renameBox(SCENE, 'box-1', 'hero')
+
+    // The var `box1` does not follow the rename (DESIGN.md §8).
+    expect(source).toContain('const box1 = document.getElementById')
   })
 
   it('returns a change-set that applies as one atomic edit (one undo step)', () => {
     const { changes, source } = renameBox(SCENE, 'box-1', 'hero')
 
-    // Two managed occurrences: the selector and the class.
-    expect(changes).toHaveLength(2)
+    // Four managed occurrences: selector, class, id, and getElementById arg.
+    expect(changes).toHaveLength(4)
     expect(changes.every((c) => c.insert === 'hero')).toBe(true)
     // Applying the change-set reproduces the returned source.
     expect(applyChanges(SCENE, changes)).toBe(source)

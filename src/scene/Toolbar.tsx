@@ -6,8 +6,7 @@ import type { Tool } from './tools'
 /**
  * The left-edge floating toolbar (Excalidraw-style, DESIGN.md §6). Presentational
  * and controlled: it renders the tools and reflects the active one, but the
- * workspace owns tool state and keyboard shortcuts. Attach JS is shown disabled
- * until Phase 3 wires it up.
+ * workspace owns tool state and keyboard shortcuts.
  */
 export function Toolbar({
   tool,
@@ -32,7 +31,7 @@ export function Toolbar({
       <ToolButton label="Box (B)" active={tool === 'box'} onClick={() => onToolChange('box')}>
         <Square />
       </ToolButton>
-      <ToolButton label="Attach JS (J)" active={false} disabled>
+      <ToolButton label="Attach JS (J)" active={tool === 'js'} onClick={() => onToolChange('js')}>
         <Code2 />
       </ToolButton>
     </div>

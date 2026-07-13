@@ -46,4 +46,19 @@ describe('computeChips', () => {
     const chips = computeChips(SCENE, MANAGED, RESOLVED)
     expect(chips.some((c) => c.name === 'glow')).toBe(false)
   })
+
+  it('chips the attached id from the same handle↔element correspondence as the class', () => {
+    // JS attached to box-1: the id names the same live element, so it resolves
+    // exactly as the class does — no separate #id matching (DESIGN.md §8).
+    const js = SCENE.replace('<div class="box-1 glow">', '<div class="box-1 glow" id="box-1">').replace(
+      '  </body>',
+      "    <script>const box1 = document.getElementById('box-1');</script>\n  </body>",
+    )
+    const chips = computeChips(js, MANAGED, RESOLVED)
+
+    const idChip = chips.find((c) => c.kind === 'id')
+    const jsRefChip = chips.find((c) => c.kind === 'js-ref')
+    expect(idChip?.resolved).toBe(true)
+    expect(jsRefChip?.resolved).toBe(true)
+  })
 })

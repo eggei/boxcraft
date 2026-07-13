@@ -8,7 +8,7 @@ const SCENE = `<html>
     </style>
   </head>
   <body>
-    <div class="box-1 glow"></div>
+    <div class="box-1 glow" id="box-1"></div>
   </body>
 </html>`
 
@@ -19,7 +19,19 @@ describe('parseElements', () => {
     const div = els.find((e) => e.tagName === 'div')!
     expect(div.classNames).toEqual(['box-1', 'glow'])
     // The opening-tag span brackets the whole <div ...> tag.
-    expect(SCENE.slice(div.openFrom, div.openTo)).toBe('<div class="box-1 glow">')
+    expect(SCENE.slice(div.openFrom, div.openTo)).toBe('<div class="box-1 glow" id="box-1">')
+  })
+
+  it('exposes the id attribute value span when present', () => {
+    const els = parseElements(SCENE)
+
+    const div = els.find((e) => e.tagName === 'div')!
+    expect(div.idValueFrom).not.toBeNull()
+    expect(SCENE.slice(div.idValueFrom!, div.idValueTo!)).toBe('box-1')
+
+    // An element with no id reports null.
+    const style = els.find((e) => e.tagName === 'style')!
+    expect(style.idValueFrom).toBeNull()
   })
 
   it('exposes the content range between a style tag and its close', () => {

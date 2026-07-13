@@ -8,8 +8,12 @@ export interface NameToken {
   from: number
   /** End offset of the name token. */
   to: number
-  /** Where it occurs: an HTML `class` value or a CSS class selector. */
-  kind: 'class' | 'selector'
+  /**
+   * Where it occurs: an HTML `class` value, a CSS class selector, the HTML `id`
+   * value, or the `getElementById('…')` string argument (the last two managed
+   * only once JS is attached — DESIGN.md §8).
+   */
+  kind: 'class' | 'selector' | 'id' | 'js-ref'
 }
 
 /**
@@ -25,14 +29,21 @@ export function locateNameTokens(source: string, names: Set<string>): NameToken[
   const tokens: NameToken[] = []
 
   for (const el of parseElements(source)) {
-    if (el.classValueFrom == null) continue
-    const value = source.slice(el.classValueFrom, el.classValueTo!)
-    for (const name of names) {
-      const idx = wordIndex(value, name)
-      if (idx >= 0) {
-        const from = el.classValueFrom + idx
-        tokens.push({ name, from, to: from + name.length, kind: 'class' })
+    if (el.classValueFrom != null) {
+      const value = source.slice(el.classValueFrom, el.classValueTo!)
+      for (const name of names) {
+        const idx = wordIndex(value, name)
+        if (idx >= 0) {
+          const from = el.classValueFrom + idx
+          tokens.push({ name, from, to: from + name.length, kind: 'class' })
+        }
       }
+    }
+    // The JS `id`: only when its value is itself a managed name (attach writes
+    // the id equal to the class, and rename keeps them in lockstep — DESIGN.md §8).
+    if (el.idValueFrom != null) {
+      const id = source.slice(el.idValueFrom, el.idValueTo!)
+      if (names.has(id)) tokens.push({ name: id, from: el.idValueFrom, to: el.idValueTo!, kind: 'id' })
     }
   }
 
@@ -47,7 +58,27 @@ export function locateNameTokens(source: string, names: Set<string>): NameToken[
     }
   }
 
+  // The `getElementById('<name>')` string argument, scoped to <script> content so
+  // no unrelated string is ever rewritten (DESIGN.md §8).
+  for (const script of scriptContentRanges(source)) {
+    const text = source.slice(script.from, script.to)
+    for (const name of names) {
+      const re = new RegExp(`getElementById\\(\\s*['"](${escapeRegExp(name)})['"]`, 'g')
+      for (const m of text.matchAll(re)) {
+        const from = script.from + m.index + m[0].indexOf(m[1])
+        tokens.push({ name, from, to: from + name.length, kind: 'js-ref' })
+      }
+    }
+  }
+
   return tokens.sort((a, b) => a.from - b.from)
+}
+
+/** Content ranges (between the tags) of every `<script>` element. */
+function scriptContentRanges(source: string): { from: number; to: number }[] {
+  return parseElements(source)
+    .filter((el) => el.tagName === 'script' && el.closeFrom != null)
+    .map((el) => ({ from: el.openTo, to: el.closeFrom! }))
 }
 
 /** Content ranges (between the tags) of every `<style>` element. */

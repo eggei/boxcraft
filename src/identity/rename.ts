@@ -15,14 +15,13 @@ export interface RenameResult {
 }
 
 /**
- * Rename a managed box everywhere it appears: the CSS `.box-N` selector and the
- * HTML `class` token (DESIGN.md §5). Every occurrence is located via the managed
- * name tokens and replaced in one change-set, so the editor applies it as a
- * single atomic transaction that a single `⌘Z` reverts. The handle/marker is
- * untouched — rename is purely cosmetic to the app.
- *
- * The JS `id` and `getElementById` occurrences are deliberately out of scope
- * here; they join the atomic rename in Phase 3 (DESIGN.md §8).
+ * Rename a managed box everywhere it appears: the CSS `.box-N` selector, the
+ * HTML `class`, and — when JS is attached — the HTML `id` and the
+ * `getElementById('…')` string argument (DESIGN.md §5, §8). Every occurrence is
+ * located via the managed name tokens and replaced in one change-set, so the
+ * editor applies it as a single atomic transaction that a single `⌘Z` reverts.
+ * The handle/marker is untouched (rename is purely cosmetic to the app), and the
+ * auto-derived JS variable name is user-owned so it is deliberately left alone.
  */
 export function renameBox(source: string, oldName: string, newName: string): RenameResult {
   const changes: Change[] = locateNameTokens(source, new Set([oldName])).map((t) => ({

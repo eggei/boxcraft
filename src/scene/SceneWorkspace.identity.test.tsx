@@ -2,12 +2,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SceneWorkspace } from './SceneWorkspace'
+import { clickBoxInScene } from '../test/drive-scene'
 
-// Hit-testing depends on real iframe geometry, which jsdom lacks. Mock the seam
-// so a Select click resolves to box-1 (the real mapping is verified in the
-// browser). Resolved-names reading is geometry-free but the srcdoc iframe does
-// not render synchronously in jsdom, so selection/rename are driven directly.
-vi.mock('./hit-test', () => ({ hitTestBox: () => 'box-1' }))
+// The scene stays live (no capture overlay); BoxCraft listens on the iframe's
+// own document. jsdom doesn't parse srcdoc, so `clickBoxInScene` injects the
+// box's real handle element and dispatches a click. The real geometry is
+// verified in the browser.
 
 const SCENE = `<!doctype html>
 <html>
@@ -43,22 +43,20 @@ describe('SceneWorkspace — instrumented render', () => {
 
 describe('SceneWorkspace — selection', () => {
   it('selects the clicked box, surfacing its name in the Rename affordance', async () => {
-    const user = userEvent.setup()
     render(<SceneWorkspace initialSource={SCENE} />)
 
-    // Select is the default tool, so the capture overlay is present.
-    await user.click(screen.getByTestId('select-overlay'))
+    // Select is the default tool; clicking the box inside the live scene selects it.
+    await clickBoxInScene(screen.getByTitle('scene') as HTMLIFrameElement)
 
     const input = (await screen.findByLabelText('Rename box')) as HTMLInputElement
     expect(input.value).toBe('box-1')
   })
 
   it('re-creates a minimal rule when selecting a box whose rule was deleted', async () => {
-    const user = userEvent.setup()
     const onSourceChange = vi.fn()
     render(<SceneWorkspace initialSource={NO_RULE} onSourceChange={onSourceChange} />)
 
-    await user.click(screen.getByTestId('select-overlay'))
+    await clickBoxInScene(screen.getByTitle('scene') as HTMLIFrameElement)
 
     await waitFor(() => {
       const latest = onSourceChange.mock.lastCall?.[0] ?? ''
@@ -74,7 +72,7 @@ describe('SceneWorkspace — rename', () => {
     render(<SceneWorkspace initialSource={SCENE} onSourceChange={onSourceChange} />)
 
     // Selecting a box that already has a rule only moves the cursor — no edit.
-    await user.click(screen.getByTestId('select-overlay'))
+    await clickBoxInScene(screen.getByTitle('scene') as HTMLIFrameElement)
     expect(onSourceChange).not.toHaveBeenCalled()
 
     const input = await screen.findByLabelText('Rename box')

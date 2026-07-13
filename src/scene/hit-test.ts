@@ -1,22 +1,15 @@
 /**
- * Resolve a client-space pointer position to the managed box under it, by
- * hit-testing *through the instrumented render* (DESIGN.md §5). The scene is a
- * same-origin `srcdoc` iframe, so we can read its document: `elementFromPoint`
- * finds what was clicked, the nearest `[data-bc]` ancestor gives the box's
- * handle, and the handle maps back to the box name. Returns null when the click
- * missed every managed box. This is a geometry seam — mocked in jsdom wiring
- * tests, exercised for real in the browser.
+ * Resolve a clicked element to the managed box that contains it (DESIGN.md §5).
+ * The scene is a same-origin `srcdoc` iframe, so a click inside it lands on a
+ * real element in the iframe's own document: the nearest `[data-bc]` ancestor
+ * gives the box's handle, which maps back to the box name. Returns null when the
+ * click was outside every managed box (e.g. the canvas background) — the caller
+ * treats that as "clear selection". Pure over the target + handle map.
  */
-export function hitTestBox(
-  frame: HTMLIFrameElement | null,
-  clientX: number,
-  clientY: number,
+export function boxNameFromElement(
+  target: Element | null,
   handles: Map<string, string>,
 ): string | null {
-  const doc = frame?.contentDocument
-  if (!doc) return null
-  const frameRect = frame!.getBoundingClientRect()
-  const target = doc.elementFromPoint(clientX - frameRect.left, clientY - frameRect.top)
   const handle = target?.closest('[data-bc]')?.getAttribute('data-bc')
   if (!handle) return null
   for (const [name, h] of handles) if (h === handle) return name
