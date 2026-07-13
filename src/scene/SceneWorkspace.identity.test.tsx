@@ -88,4 +88,34 @@ describe('SceneWorkspace — rename', () => {
     // Exactly one edit for the whole rename → a single ⌘Z reverts it.
     expect(onSourceChange).toHaveBeenCalledTimes(1)
   })
+
+  it('a plain ⌘Z after Rename keeps the box tracked (chips resolve, box stays selectable)', async () => {
+    const user = userEvent.setup()
+    render(<SceneWorkspace initialSource={SCENE} />)
+
+    await clickBoxInScene(screen.getByTitle('scene') as HTMLIFrameElement)
+    const input = await screen.findByLabelText('Rename box')
+    await user.clear(input)
+    await user.type(input, 'hero')
+    await user.click(screen.getByRole('button', { name: /rename/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTitle('scene').getAttribute('srcdoc')).toContain('class="hero"')
+    })
+
+    const content = document.querySelector('.cm-content') as HTMLElement
+    await user.click(content)
+    await user.keyboard('{Control>}z{/Control}')
+
+    await waitFor(() => {
+      expect(document.querySelector('.cm-content')?.textContent).toContain('box-1')
+    })
+    // The box reverted to `box-1` in the text; it must still be tracked — the
+    // instrumented render should still carry a `data-bc` handle for it, not
+    // go dark until reload (Phase 5 — undo-after-rename desync).
+    await waitFor(() => {
+      const srcdoc = screen.getByTitle('scene').getAttribute('srcdoc')!
+      expect(srcdoc).toContain('class="box-1" data-bc="')
+    })
+  })
 })

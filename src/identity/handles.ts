@@ -23,6 +23,16 @@ export interface HandleMarker {
   name: string
   from: number
   to: number
+  /**
+   * The span of the name token itself (e.g. the `box-1`/`hero` text inside the
+   * `class` attribute), tracked separately from the opening-tag anchor so the
+   * handle field can map it through edits and read the box's *current* name
+   * straight off the document — surviving CodeMirror's built-in undo/redo of a
+   * Rename without needing every transaction to carry an explicit annotation
+   * (Phase 5 — undo-after-rename fix).
+   */
+  nameFrom: number
+  nameTo: number
 }
 
 /**
@@ -58,6 +68,8 @@ export function reconcileHandles(
       name: box.name,
       from: box.openTagFrom,
       to: box.openTagTo,
+      nameFrom: box.nameFrom,
+      nameTo: box.nameTo,
     }))
 
   return [...survivors, ...minted].sort((a, b) => a.from - b.from)

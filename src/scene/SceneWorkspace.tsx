@@ -13,7 +13,6 @@ import { instrument } from '../identity/instrument'
 import { attachJs } from '../js/attach-js'
 import { detachJs } from '../js/detach-js'
 import { renameBox } from '../identity/rename'
-import { renameHandle } from '../identity/handle-field'
 import { locateRule, boxAtCursor } from '../identity/rules'
 import { resolvedNamesFromFrame } from './resolved-names'
 import type { Tool } from './tools'
@@ -230,9 +229,11 @@ export function SceneWorkspace({
   }
 
   /**
-   * Rename the selected box everywhere at once (class + CSS selector) in a single
-   * transaction — one `⌘Z` reverts it — carrying the rename annotation so the
-   * handle's marker follows the new name without the handle changing (DESIGN.md §5).
+   * Rename the selected box everywhere at once (class + CSS selector) in a
+   * single transaction — one `⌘Z` reverts it. The handle field re-derives the
+   * marker's name straight from the document on every change (including this
+   * one, and its own undo/redo), so the handle stays bound without an explicit
+   * annotation (DESIGN.md §5).
    */
   function renameSelected(newName: string) {
     const view = viewRef.current
@@ -240,7 +241,7 @@ export function SceneWorkspace({
     const handle = handles.get(selected)
     const { changes } = renameBox(view.state.doc.toString(), selected, newName)
     if (!changes.length || !handle) return
-    view.dispatch({ changes, annotations: renameHandle.of({ handle, name: newName }) })
+    view.dispatch({ changes })
     setSelected(newName)
   }
 

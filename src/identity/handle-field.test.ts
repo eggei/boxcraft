@@ -33,4 +33,26 @@ describe('handle field', () => {
     expect(handles.get('box-1')).toBe(box1Handle)
     expect(handles.get('box-2')).not.toBe(box1Handle)
   })
+
+  it('keeps the handle bound after undoing a rename — no annotation required', () => {
+    const field = createHandleField()
+    let state = EditorState.create({ doc: ONE, extensions: [field] })
+    const box1Handle = handleByName(state.field(field)).get('box-1')
+
+    // Rename box-1 -> hero: replace just the class-value token.
+    const nameFrom = ONE.indexOf('box-1')
+    const renameTr = state.update({
+      changes: { from: nameFrom, to: nameFrom + 'box-1'.length, insert: 'hero' },
+    })
+    state = renameTr.state
+    expect(handleByName(state.field(field)).get('hero')).toBe(box1Handle)
+
+    // Undo via CodeMirror's own inverted changes — no rename annotation at all.
+    const undoTr = state.update({ changes: renameTr.changes.invert(renameTr.startState.doc) })
+    state = undoTr.state
+
+    const handles = handleByName(state.field(field))
+    expect(handles.get('box-1')).toBe(box1Handle)
+    expect(handles.has('hero')).toBe(false)
+  })
 })
