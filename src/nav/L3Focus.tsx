@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Scene } from '../persistence/scene-store'
 import { useSceneStore } from '../persistence/SceneStoreContext'
+import { createAutosave, type Autosave } from '../persistence/autosave'
 import { useNav } from './NavContext'
 import { SceneWorkspace } from '../scene/SceneWorkspace'
 
@@ -18,6 +19,7 @@ export function L3Focus({ id }: { id: string }) {
   const { dispatch } = useNav()
   const [scene, setScene] = useState<Scene | null>(null)
   const sceneRef = useRef<Scene | null>(null)
+  const autosaveRef = useRef<Autosave<string> | null>(null)
 
   useEffect(loadScene, [store, id])
   function loadScene() {
@@ -30,6 +32,23 @@ export function L3Focus({ id }: { id: string }) {
     })
     return () => {
       cancelled = true
+    }
+  }
+
+  // One debounced, failure-retrying autosave per (store, id) — coalesces
+  // rapid keystroke saves into a single write, and flushes any pending edit
+  // before the scene is torn down (id change or unmount) so switching scenes
+  // mid-edit can never drop the last keystrokes (Phase 5 — autosave hardening).
+  useEffect(setUpAutosave, [store, id])
+  function setUpAutosave() {
+    const autosave = createAutosave<string>(
+      (source) => store.put({ ...(sceneRef.current as Scene), source }),
+      { onError: (error) => console.error('BoxCraft: autosave failed', error) },
+    )
+    autosaveRef.current = autosave
+    return () => {
+      autosave.flush()
+      autosaveRef.current = null
     }
   }
 
@@ -56,7 +75,7 @@ export function L3Focus({ id }: { id: string }) {
         <SceneWorkspace
           initialSource={scene.source}
           onSourceChange={(source) => {
-            if (sceneRef.current) store.put({ ...sceneRef.current, source })
+            if (sceneRef.current) autosaveRef.current?.schedule(source)
           }}
         />
       </div>

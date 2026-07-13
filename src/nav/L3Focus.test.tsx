@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, it, expect } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { openSceneStore } from '../persistence/scene-store'
 import { SceneStoreProvider } from '../persistence/SceneStoreContext'
 import { NavProvider, useNav } from './NavContext'
@@ -69,5 +70,34 @@ describe('L3Focus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to feed' }))
 
     await waitFor(() => expect(screen.getByTestId('level')).toHaveTextContent('L2'))
+  })
+
+  it('flushes a pending edit before unmounting, so switching away mid-edit does not lose it', async () => {
+    const store = await openSceneStore(freshDb())
+    await store.put({ id: 'a', title: 'Scene 1', source: 'x', order: 0 })
+    const user = userEvent.setup()
+
+    const { unmount } = render(
+      <SceneStoreProvider store={store}>
+        <NavProvider initialState={{ level: 'L3', currentId: 'a' }}>
+          <L3Focus id="a" />
+        </NavProvider>
+      </SceneStoreProvider>,
+    )
+    const content = await waitFor(() => {
+      const el = document.querySelector('.cm-content')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    await user.click(content)
+    await user.type(content, 'Z')
+
+    // Unmount immediately — before the debounce window would otherwise fire.
+    unmount()
+
+    await waitFor(async () => {
+      const saved = await store.get('a')
+      expect(saved?.source).toContain('Z')
+    })
   })
 })
