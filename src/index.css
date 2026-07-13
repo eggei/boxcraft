@@ -128,3 +128,22 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Chip decorations on managed identity tokens (DESIGN.md §5). A chip marks a
+ * token whose box resolves to a live element; an error mark surfaces a managed
+ * token that no longer resolves (e.g. its <div> was deleted or hand-edited).
+ */
+.bc-chip {
+  border-radius: 4px;
+  padding: 0 2px;
+  background: oklch(0.62 0.19 264 / 0.16);
+  box-shadow: inset 0 0 0 1px oklch(0.62 0.19 264 / 0.4);
+}
+.bc-chip-error {
+  border-radius: 4px;
+  padding: 0 2px;
+  background: oklch(0.63 0.24 27 / 0.16);
+  box-shadow: inset 0 0 0 1px oklch(0.63 0.24 27 / 0.5);
+  text-decoration: underline wavy oklch(0.63 0.24 27 / 0.7);
+}

@@ -14,9 +14,21 @@ import type { Ref } from 'react'
 export function SceneFrame({
   source,
   frameRef,
+  onLoad,
 }: {
   source: string
   frameRef?: Ref<HTMLIFrameElement>
+  /** Fires when the instrumented document has rendered, so the workspace can
+   *  read which handles resolved to live elements (DESIGN.md §5). */
+  onLoad?: () => void
 }) {
-  return <iframe ref={frameRef} title="scene" srcDoc={source} className="h-full w-full border-0" />
+  return (
+    <iframe
+      ref={frameRef}
+      title="scene"
+      srcDoc={source}
+      onLoad={onLoad}
+      className="h-full w-full border-0"
+    />
+  )
 }
