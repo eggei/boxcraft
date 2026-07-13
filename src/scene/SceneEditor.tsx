@@ -4,6 +4,7 @@ import { EditorState } from '@codemirror/state'
 import { html } from '@codemirror/lang-html'
 import { createHandleField, handleByName } from '../identity/handle-field'
 import { createChipDecorations, setResolvedNames } from '../identity/chip-decorations'
+import { createGreyedDecorations } from '../identity/greyed-decorations'
 
 /**
  * CodeMirror 6 editor bound to a scene's HTML source.
@@ -64,6 +65,7 @@ export function SceneEditor({
   function mountEditor() {
     const handleField = createHandleField()
     const chips = createChipDecorations(handleField)
+    const greyed = createGreyedDecorations()
     const view = new EditorView({
       state: EditorState.create({
         doc: value,
@@ -72,6 +74,7 @@ export function SceneEditor({
           html(),
           handleField,
           chips.extension,
+          greyed.extension,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               onChangeRef.current(update.state.doc.toString())
