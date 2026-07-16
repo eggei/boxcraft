@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { Copy, Archive, Trash2 } from 'lucide-react'
 import { activeScenes, type Scene } from './sceneList'
 import { ScenePreview } from './ScenePreview'
@@ -8,20 +9,44 @@ const WINDOW = 1
 
 export function SceneFeed({
   scenes,
+  focusIndex,
   onRename,
   onDuplicate,
   onArchive,
   onDelete,
+  onCurrentIndexChange,
 }: {
   scenes: Scene[]
+  /** When set, the feed scrolls this card into view on mount. */
+  focusIndex?: number
   onRename: (id: string, title: string) => void
   onDuplicate: (id: string) => void
   onArchive: (id: string) => void
   onDelete: (id: string) => void
+  onCurrentIndexChange?: (index: number) => void
 }) {
   const active = activeScenes(scenes)
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const [currentIndex, setCurrentIndex] = useState(focusIndex ?? 0)
   const cardRefs = useRef<Array<HTMLElement | null>>([])
+  const scrollerRef = useRef<HTMLDivElement>(null)
+
+  // Jump to the requested card on mount (e.g. after clicking an L1 tile). Each
+  // card is exactly one viewport tall, so scroll by index — robust against any
+  // transform on an ancestor (the level-change animation) skewing geometry.
+  useEffect(function scrollToFocus() {
+    if (focusIndex == null) return
+    const scroller = scrollerRef.current
+    if (scroller) scroller.scrollTop = focusIndex * scroller.clientHeight
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Report the centered card so the owner can Start Editing on the right scene.
+  useEffect(
+    function reportCurrent() {
+      onCurrentIndexChange?.(currentIndex)
+    },
+    [currentIndex, onCurrentIndexChange],
+  )
 
   // Track which card is centered so we can window the live iframes around it.
   useEffect(
@@ -58,7 +83,10 @@ export function SceneFeed({
   }
 
   return (
-    <div className="h-full snap-y snap-mandatory overflow-y-auto">
+    <div
+      ref={scrollerRef}
+      className="h-full snap-y snap-mandatory overflow-y-auto"
+    >
       {active.map((scene, index) => (
         <section
           key={scene.id}
@@ -86,13 +114,16 @@ export function SceneFeed({
               <Trash2 className="size-4" />
             </IconButton>
           </div>
-          <div className="aspect-square w-full max-w-[520px] flex-1">
+          <motion.div
+            layoutId={`scene-${scene.id}`}
+            className="aspect-square w-full max-w-[520px] flex-1"
+          >
             <ScenePreview
               source={scene.source}
               title={scene.title}
               live={Math.abs(index - currentIndex) <= WINDOW}
             />
-          </div>
+          </motion.div>
         </section>
       ))}
     </div>
