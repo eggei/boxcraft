@@ -26,13 +26,16 @@ describe('Toolbar', () => {
     )
   })
 
-  it('switches tools with the V and B shortcuts', async () => {
+  it('switches tools with the V, B and J shortcuts', async () => {
     const onToolChange = vi.fn()
     const user = userEvent.setup()
     render(<Toolbar tool="select" onToolChange={onToolChange} />)
 
     await user.keyboard('b')
     expect(onToolChange).toHaveBeenLastCalledWith('box')
+
+    await user.keyboard('j')
+    expect(onToolChange).toHaveBeenLastCalledWith('js')
 
     await user.keyboard('v')
     expect(onToolChange).toHaveBeenLastCalledWith('select')

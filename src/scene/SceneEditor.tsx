@@ -6,8 +6,10 @@ import type { Extension } from '@codemirror/state'
 import { html } from '@codemirror/lang-html'
 import { basicSetup } from 'codemirror'
 import {
+  attachJs,
   boxAtOffset,
   createBox,
+  detachJs,
   ensureRule,
   listBoxes,
   rename,
@@ -24,6 +26,10 @@ export interface SceneEditorHandle {
   selectBox: (handle: string) => void
   /** Rename a box everywhere in one undo step. */
   renameBox: (handle: string, newName: string) => void
+  /** Attach JS to a box (or jump to its line) and land the cursor to code. */
+  attachJs: (handle: string) => void
+  /** Detach a box's JS wiring in one undo step. */
+  detachJs: (handle: string) => void
 }
 
 interface SceneEditorProps {
@@ -196,6 +202,36 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
           const { source: next } = rename(source, handleId, newName)
           if (next === source) return
           // A single transaction — one ⌘Z reverts the whole rename.
+          view.dispatch({
+            changes: { from: 0, to: source.length, insert: next },
+          })
+          onChangeRef.current(next)
+        },
+
+        attachJs(handleId) {
+          const view = viewRef.current
+          if (!view) return
+          const source = view.state.doc.toString()
+          const result = attachJs(source, handleId)
+          view.dispatch({
+            // Re-attach returns the same source — just jump to the line.
+            changes:
+              result.source === source
+                ? undefined
+                : { from: 0, to: source.length, insert: result.source },
+            selection: { anchor: result.cursor },
+            scrollIntoView: true,
+          })
+          view.focus()
+          if (result.source !== source) onChangeRef.current(result.source)
+        },
+
+        detachJs(handleId) {
+          const view = viewRef.current
+          if (!view) return
+          const source = view.state.doc.toString()
+          const { source: next } = detachJs(source, handleId)
+          if (next === source) return
           view.dispatch({
             changes: { from: 0, to: source.length, insert: next },
           })

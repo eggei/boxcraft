@@ -21,6 +21,16 @@ function App() {
     editorRef.current?.selectBox(handle)
   }
 
+  function handleAttachJs(handle: string) {
+    setSelectedHandle(handle)
+    editorRef.current?.attachJs(handle)
+    setTool('select') // tool reverts to Select after attaching
+  }
+
+  function handleDetachJs() {
+    if (selectedHandle) editorRef.current?.detachJs(selectedHandle)
+  }
+
   function handleRename() {
     if (!selectedHandle || !scene) return
     const box = listBoxes(scene.source).find((b) => b.handle === selectedHandle)
@@ -34,6 +44,9 @@ function App() {
     scene && selectedHandle
       ? listBoxes(scene.source).find((b) => b.handle === selectedHandle)
       : undefined
+  const selectedHasJs =
+    !!selectedBox &&
+    scene!.source.includes(`getElementById('${selectedBox.className}')`)
 
   return (
     <div className="flex h-svh flex-col">
@@ -69,6 +82,7 @@ function App() {
               selectedHandle={selectedHandle}
               onCreateBox={handleCreateBox}
               onSelectBox={handleSelectBox}
+              onAttachJs={handleAttachJs}
             />
             {selectedBox && (
               <div className="bg-background absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-md">
@@ -81,6 +95,17 @@ function App() {
                   className="hover:bg-muted rounded-md border px-2 py-1"
                 >
                   Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={
+                    selectedHasJs
+                      ? handleDetachJs
+                      : () => handleAttachJs(selectedHandle!)
+                  }
+                  className="hover:bg-muted rounded-md border px-2 py-1"
+                >
+                  {selectedHasJs ? 'Detach JS' : 'Attach JS'}
                 </button>
               </div>
             )}

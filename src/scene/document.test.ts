@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SOURCE } from './useScene'
 import {
+  attachJs,
   boxAtOffset,
   createBox,
+  detachJs,
   ensureRule,
   instrument,
   listBoxes,
@@ -300,5 +302,136 @@ describe('boxAtOffset', () => {
 
   it('reports nothing when the cursor is outside every rule', () => {
     expect(boxAtOffset(withBoxes(1), 0)).toBeNull()
+  })
+})
+
+describe('attachJs', () => {
+  const firstHandle = (source: string) => listBoxes(source)[0].handle
+
+  it('adds an id and a getElementById line in one shared script', () => {
+    const source = withBoxes(1)
+    const { source: next, varName } = attachJs(source, firstHandle(source))
+
+    const doc = parse(next)
+    expect(doc.querySelector('.box-1')?.id).toBe('box-1')
+    expect(doc.querySelectorAll('script')).toHaveLength(1)
+    expect(doc.querySelector('script')?.textContent).toContain(
+      "const box1 = document.getElementById('box-1')",
+    )
+    expect(varName).toBe('box1')
+  })
+
+  it('lands the cursor inside the script, below the wiring line', () => {
+    const source = withBoxes(1)
+    const { source: next, cursor } = attachJs(source, firstHandle(source))
+
+    const constEnd = next.indexOf(';', next.indexOf('getElementById'))
+    const scriptClose = next.indexOf('</script>')
+    expect(cursor).toBeGreaterThan(constEnd)
+    expect(cursor).toBeLessThan(scriptClose)
+  })
+
+  it('appends to the single shared script for a second box', () => {
+    let source = withBoxes(2)
+    const [b1, b2] = listBoxes(source)
+    source = attachJs(source, b1.handle).source
+    source = attachJs(source, b2.handle).source
+
+    const doc = parse(source)
+    expect(doc.querySelectorAll('script')).toHaveLength(1)
+    const script = doc.querySelector('script')?.textContent ?? ''
+    expect(script).toContain("getElementById('box-1')")
+    expect(script).toContain("getElementById('box-2')")
+  })
+
+  it('re-attaching does not duplicate the const line', () => {
+    const source = withBoxes(1)
+    const handle = firstHandle(source)
+    const once = attachJs(source, handle).source
+    const twice = attachJs(once, handle)
+
+    expect(twice.source).toBe(once) // no new edit — jump to the existing line
+    expect(once.split("getElementById('box-1')").length - 1).toBe(1)
+  })
+
+  it('a freshly created box carries no id until JS is attached', () => {
+    expect(parse(withBoxes(1)).querySelector('.box-1')?.id).toBe('')
+  })
+})
+
+describe('detachJs', () => {
+  it('removes the id and the wiring line, dropping the now-empty script', () => {
+    const source = withBoxes(1)
+    const handle = listBoxes(source)[0].handle
+    const attached = attachJs(source, handle).source
+
+    const { source: detached } = detachJs(attached, handle)
+
+    const doc = parse(detached)
+    expect(doc.querySelector('.box-1')).not.toBeNull() // the box itself stays
+    expect(doc.querySelector('.box-1')?.id).toBe('')
+    expect(detached).not.toContain("getElementById('box-1')")
+    expect(doc.querySelectorAll('script')).toHaveLength(0)
+  })
+
+  it('leaves other boxes wired when detaching one', () => {
+    let source = withBoxes(2)
+    const [b1, b2] = listBoxes(source)
+    source = attachJs(source, b1.handle).source
+    source = attachJs(source, b2.handle).source
+
+    const { source: detached } = detachJs(source, b1.handle)
+
+    const doc = parse(detached)
+    expect(doc.querySelector('.box-1')?.id).toBe('')
+    expect(doc.querySelector('.box-2')?.id).toBe('box-2')
+    expect(detached).not.toContain("getElementById('box-1')")
+    expect(detached).toContain("getElementById('box-2')")
+    expect(doc.querySelectorAll('script')).toHaveLength(1)
+  })
+
+  it('is a no-op for a box that has no JS', () => {
+    const source = withBoxes(1)
+    expect(detachJs(source, listBoxes(source)[0].handle).source).toBe(source)
+  })
+})
+
+describe('rename with JS attached', () => {
+  it('rewrites class + id + getElementById together, keeping the variable name', () => {
+    const base = withBoxes(1)
+    const source = attachJs(base, listBoxes(base)[0].handle).source
+    const handle = listBoxes(source)[0].handle
+
+    const { source: renamed } = rename(source, handle, 'hero')
+
+    const doc = parse(renamed)
+    expect(doc.querySelector('.hero')?.id).toBe('hero') // class + id updated
+    expect(renamed).toContain("getElementById('hero')") // arg updated
+    expect(renamed).toContain('const box1 =') // variable name is user-owned
+    expect(renamed).not.toContain('box-1') // no stray old identity left
+  })
+
+  it('treats the id and getElementById arg as managed chip occurrences', () => {
+    const base = withBoxes(1)
+    const source = attachJs(base, listBoxes(base)[0].handle).source
+
+    const token = resolveTokens(source).find((t) => t.className === 'box-1')!
+    expect(token.resolved).toBe(true)
+    // class attr + CSS selector + id attr + getElementById arg — all 'box-1'.
+    expect(token.ranges.length).toBeGreaterThanOrEqual(4)
+    for (const { from, to } of token.ranges) {
+      expect(source.slice(from, to)).toBe('box-1')
+    }
+  })
+
+  it('errors the JS reference when the box <div> is deleted', () => {
+    const base = withBoxes(1)
+    const source = attachJs(base, listBoxes(base)[0].handle).source
+    // Drop the box element but keep its rule and its getElementById line.
+    const orphaned = source.replace(/<div class="box-1"[^>]*><\/div>\n\s*/, '')
+
+    expect(resolveTokens(orphaned).find((t) => t.className === 'box-1')?.resolved).toBe(
+      false,
+    )
   })
 })

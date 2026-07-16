@@ -10,6 +10,7 @@ interface SceneStageProps {
   selectedHandle: string | null
   onCreateBox: (placement: BoxPlacement) => void
   onSelectBox: (handle: string) => void
+  onAttachJs: (handle: string) => void
 }
 
 interface DragState {
@@ -44,6 +45,7 @@ export function SceneStage({
   selectedHandle,
   onCreateBox,
   onSelectBox,
+  onAttachJs,
 }: SceneStageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -109,11 +111,13 @@ export function SceneStage({
     })
   }
 
-  // The Select tool hit-tests clicks inside the iframe via `data-bc`. The
-  // listener lives on the iframe document so the scene's own JS still runs.
+  // The Select and JS tools hit-test clicks inside the iframe via `data-bc`.
+  // The listener lives on the iframe document so the scene's own JS still runs.
   const onSelectRef = useRef(onSelectBox)
+  const onAttachRef = useRef(onAttachJs)
   const toolRef = useRef(tool)
   onSelectRef.current = onSelectBox
+  onAttachRef.current = onAttachJs
   toolRef.current = tool
 
   // Measure the selected box and size the outline to it. Reads the iframe's
@@ -143,10 +147,13 @@ export function SceneStage({
       const doc = iframe!.contentDocument
       if (doc) {
         doc.addEventListener('click', function hitTest(event) {
-          if (toolRef.current !== 'select') return
+          const tool = toolRef.current
+          if (tool !== 'select' && tool !== 'js') return
           const target = event.target as Element | null
           const handle = target?.closest('[data-bc]')?.getAttribute('data-bc')
-          if (handle) onSelectRef.current(handle)
+          if (!handle) return
+          if (tool === 'js') onAttachRef.current(handle)
+          else onSelectRef.current(handle)
         })
       }
       measureOutline.current() // re-align once the new render has painted

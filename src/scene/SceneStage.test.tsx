@@ -10,6 +10,7 @@ function stageProps() {
     selectedHandle: null,
     onCreateBox: vi.fn(),
     onSelectBox: vi.fn(),
+    onAttachJs: vi.fn(),
   }
 }
 
