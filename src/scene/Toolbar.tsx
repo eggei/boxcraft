@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { MousePointer2, Square } from 'lucide-react'
+import { Braces, MousePointer2, Square } from 'lucide-react'
 
-export type Tool = 'select' | 'box'
+export type Tool = 'select' | 'box' | 'js'
 
 interface ToolbarProps {
   tool: Tool
@@ -11,6 +11,7 @@ interface ToolbarProps {
 const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Square }[] = [
   { id: 'select', label: 'Select', key: 'V', Icon: MousePointer2 },
   { id: 'box', label: 'Box', key: 'B', Icon: Square },
+  { id: 'js', label: 'Attach JS', key: 'J', Icon: Braces },
 ]
 
 /**
@@ -34,6 +35,7 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
         const key = event.key.toLowerCase()
         if (key === 'v') onToolChange('select')
         else if (key === 'b') onToolChange('box')
+        else if (key === 'j') onToolChange('js')
       }
       window.addEventListener('keydown', onKeyDown)
       return function unbind() {

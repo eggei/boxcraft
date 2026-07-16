@@ -190,18 +190,37 @@ export function resolveTokens(source: string): ManagedToken[] {
   }
   const live = new Set(htmlRanges.keys())
 
-  // Orphaned `.box-N` rules (our namespace) with no live box → error tokens.
+  // Orphaned references in our `box-N` namespace with no live box → error
+  // tokens: a `.box-N` rule or a `getElementById('box-N')` line left behind.
   const names = new Set(live)
   for (const m of source.matchAll(/\.(box-\d+)(?![\w-])/g)) {
     if (!live.has(m[1])) names.add(m[1])
   }
+  for (const m of source.matchAll(/getElementById\((['"])(box-\d+)\1\)/g)) {
+    if (!live.has(m[2])) names.add(m[2])
+  }
 
   return [...names].map((name) => {
     const ranges = [...(htmlRanges.get(name) ?? [])]
-    const selector = new RegExp('\\.' + escapeRegExp(name) + '(?![\\w-])', 'g')
-    for (const m of source.matchAll(selector)) {
+    const escaped = escapeRegExp(name)
+
+    // CSS selector `.name`
+    for (const m of source.matchAll(new RegExp('\\.' + escaped + '(?![\\w-])', 'g'))) {
       ranges.push({ from: m.index + 1, to: m.index + 1 + name.length })
     }
+    // Managed `id="name"` (added by the JS tool; the id mirrors the class)
+    for (const m of source.matchAll(new RegExp('\\bid="(' + escaped + ')"', 'g'))) {
+      const at = m.index + m[0].indexOf(name)
+      ranges.push({ from: at, to: at + name.length })
+    }
+    // `getElementById('name')` argument
+    for (const m of source.matchAll(
+      new RegExp("getElementById\\((['\"])" + escaped + '\\1\\)', 'g'),
+    )) {
+      const at = m.index + m[0].indexOf(name)
+      ranges.push({ from: at, to: at + name.length })
+    }
+
     ranges.sort((a, b) => a.from - b.from)
     return { className: name, resolved: live.has(name), ranges }
   })
@@ -260,6 +279,111 @@ export function ensureRule(source: string, handle: string): EnsureRuleResult {
   const cursor = styleClose + rule.length
   const next = source.slice(0, styleClose) + rule + ruleTail + source.slice(styleClose)
   return { source: next, cursor, created: true }
+}
+
+/** A box's opening-tag `id`, or null. */
+function idAttrOf(openTag: string): string | null {
+  const m = openTag.match(/\bid="([^"]*)"/)
+  return m ? m[1] : null
+}
+
+/** Auto-derive a JS variable name from a class (`box-1` → `box1`). */
+function varNameFor(className: string): string {
+  const parts = className.split(/[^a-zA-Z0-9]+/).filter(Boolean)
+  if (parts.length === 0) return 'el'
+  return (
+    parts[0].toLowerCase() +
+    parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join('')
+  )
+}
+
+export interface AttachJsResult {
+  source: string
+  /** Offset to land the cursor at — below the generated wiring, ready to code. */
+  cursor: number
+  /** The auto-derived, user-owned variable name (does not follow renames). */
+  varName: string
+}
+
+/**
+ * Wire a box for scripting: add a real `id` to the element and a
+ * `const <var> = document.getElementById('<id>')` line to the single shared
+ * `<script>` at the end of `<body>` (created on first attach). Re-attaching an
+ * already-wired box jumps to its existing line instead of duplicating it.
+ */
+export function attachJs(source: string, handle: string): AttachJsResult {
+  const boxes = scanBoxes(source)
+  const idx = listBoxes(source).findIndex((b) => b.handle === handle)
+  if (idx === -1) return { source, cursor: 0, varName: '' }
+
+  const raw = boxes[idx]
+  const id = identityClass(classAttrOf(raw.openTag))
+  const varName = varNameFor(id)
+
+  // Already wired → jump to the existing const line (no duplicate).
+  if (idAttrOf(raw.openTag)) {
+    const marker = `getElementById('${id}')`
+    const at = source.indexOf(marker)
+    return { source, cursor: at === -1 ? source.length : at + marker.length, varName }
+  }
+
+  // 1. Add the id to the box's opening tag (just before its closing `>`).
+  const insertIdAt = raw.openEnd - 1
+  let out = source.slice(0, insertIdAt) + ` id="${id}"` + source.slice(insertIdAt)
+
+  // 2. Append the wiring to the single shared <script> (create if absent).
+  const constLine = `      const ${varName} = document.getElementById('${id}');`
+  const scriptClose = out.indexOf('</script>')
+
+  if (scriptClose === -1) {
+    const bodyClose = out.lastIndexOf('</body>')
+    const block = `  <script>\n${constLine}\n      \n    </script>\n  `
+    const cursor = bodyClose + `  <script>\n${constLine}\n      `.length
+    out = out.slice(0, bodyClose) + block + out.slice(bodyClose)
+    return { source: out, cursor, varName }
+  }
+
+  // Insert before the line that holds </script>, with a blank landing line.
+  const lineStart = out.lastIndexOf('\n', scriptClose) + 1
+  const cursor = lineStart + `${constLine}\n      `.length
+  out = out.slice(0, lineStart) + `${constLine}\n      \n` + out.slice(lineStart)
+  return { source: out, cursor, varName }
+}
+
+/**
+ * Remove a box's JS wiring: strip the `id` from the element and the matching
+ * `getElementById` line from the shared script, removing the script block once
+ * it holds no more references. A box with no JS attached is left untouched.
+ */
+export function detachJs(source: string, handle: string): { source: string } {
+  const boxes = scanBoxes(source)
+  const idx = listBoxes(source).findIndex((b) => b.handle === handle)
+  if (idx === -1) return { source }
+
+  const raw = boxes[idx]
+  const id = idAttrOf(raw.openTag)
+  if (!id) return { source } // no JS attached
+
+  // 1. Strip the id from the opening tag.
+  const newTag = raw.openTag.replace(/\s+id="[^"]*"/, '')
+  let out = source.slice(0, raw.openStart) + newTag + source.slice(raw.openEnd)
+
+  // 2. Remove the const line that references this id.
+  const line = new RegExp(
+    `[ \\t]*const [^\\n]*getElementById\\((['"])${escapeRegExp(id)}\\1\\)[^\\n]*\\n`,
+  )
+  out = out.replace(line, '')
+
+  // 3. Drop the shared script entirely once it has no more const wiring.
+  const open = out.indexOf('<script>')
+  const close = out.indexOf('</script>')
+  if (open !== -1 && close !== -1) {
+    const inner = out.slice(open + '<script>'.length, close)
+    if (!inner.includes('const ')) {
+      out = out.replace(/[ \t]*<script>[\s\S]*?<\/script>\n?/, '')
+    }
+  }
+  return { source: out }
 }
 
 export interface RenameResult {
