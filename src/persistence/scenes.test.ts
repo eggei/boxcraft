@@ -7,6 +7,8 @@ describe('scene persistence', () => {
       id: 'scene-1',
       title: 'Glow button',
       source: '<!doctype html>\n<html>\n  <body>\n    <div class="canvas"></div>\n  </body>\n</html>\n',
+      order: 0,
+      archivedAt: null,
     }
 
     await saveScene(scene)
@@ -16,8 +18,8 @@ describe('scene persistence', () => {
   })
 
   it('returns every saved scene', async () => {
-    await saveScene({ id: 'a', title: 'A', source: '<html>a</html>' })
-    await saveScene({ id: 'b', title: 'B', source: '<html>b</html>' })
+    await saveScene({ id: 'a', title: 'A', source: '<html>a</html>', order: 0, archivedAt: null })
+    await saveScene({ id: 'b', title: 'B', source: '<html>b</html>', order: 1, archivedAt: null })
 
     const all = await getAllScenes()
 
@@ -26,8 +28,8 @@ describe('scene persistence', () => {
   })
 
   it('overwrites in place when the same scene is saved again (autosave)', async () => {
-    await saveScene({ id: 'scene-1', title: 'Draft', source: '<html>v1</html>' })
-    await saveScene({ id: 'scene-1', title: 'Draft', source: '<html>v2</html>' })
+    await saveScene({ id: 'scene-1', title: 'Draft', source: '<html>v1</html>', order: 0, archivedAt: null })
+    await saveScene({ id: 'scene-1', title: 'Draft', source: '<html>v2</html>', order: 0, archivedAt: null })
 
     const all = await getAllScenes()
     const loaded = await getScene('scene-1')

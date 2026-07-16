@@ -1,10 +1,7 @@
 import { getAllRecords, getRecord, putRecord, SCENES_STORE } from './idb'
+import type { Scene } from '@/scenes/sceneList'
 
-export interface Scene {
-  id: string
-  title: string
-  source: string
-}
+export type { Scene }
 
 export async function saveScene(scene: Scene): Promise<void> {
   await putRecord(SCENES_STORE, scene)
