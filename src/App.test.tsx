@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import App from './App'
-import { getScene } from './persistence/scenes'
+import { getAllScenes, getScene } from './persistence/scenes'
 
 describe('App', () => {
   it('renders the BoxCraft heading', async () => {
@@ -12,21 +12,28 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('autosaves title edits so they persist across a reload', async () => {
+  it('seeds example scenes on first run with an empty database', async () => {
+    render(<App />)
+    await screen.findAllByTestId('scene-card')
+    const seeded = await getAllScenes()
+    expect(seeded.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('autosaves a title edit so it persists across a reload', async () => {
     const user = userEvent.setup()
     const { unmount } = render(<App />)
 
-    const titleInput = await screen.findByLabelText('Scene title')
-    await user.clear(titleInput)
-    await user.type(titleInput, 'Glow button')
+    const [firstTitle] = await screen.findAllByRole('textbox')
+    await user.clear(firstTitle)
+    await user.type(firstTitle, 'Neon ring')
 
     await waitFor(async () => {
-      expect((await getScene('scene-1'))?.title).toBe('Glow button')
+      expect((await getScene('seed-1'))?.title).toBe('Neon ring')
     })
 
     // Simulate a reload: throw away the React tree, remount from persistence.
     unmount()
     render(<App />)
-    expect(await screen.findByDisplayValue('Glow button')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('Neon ring')).toBeInTheDocument()
   })
 })
