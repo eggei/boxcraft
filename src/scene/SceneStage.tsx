@@ -1,12 +1,15 @@
-import { useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { BoxPlacement } from './document'
+import { instrument, type BoxPlacement } from './document'
 import type { Tool } from './Toolbar'
 
 interface SceneStageProps {
   source: string
   tool: Tool
+  /** Handle of the currently selected box, for the outline overlay. */
+  selectedHandle: string | null
   onCreateBox: (placement: BoxPlacement) => void
+  onSelectBox: (handle: string) => void
 }
 
 interface DragState {
@@ -28,14 +31,25 @@ function canvasPageRect(iframe: HTMLIFrameElement | null): DOMRect | null {
 }
 
 /**
- * The rendered scene: an isolated iframe of the source (its `console.log`
- * reaches the real devtools — no in-app console), plus a box-tool overlay that
- * turns clicks and marquees inside the canvas into canvas-relative placements.
+ * The rendered scene: an isolated iframe of the instrumented source (its
+ * `console.log` reaches the real devtools — no in-app console). The source in
+ * the iframe carries transient `data-bc` handles for hit-testing; the authored
+ * document never does. Clicks are turned into placements (Box tool), a box
+ * selection (Select tool), or a JS attach (JS tool). The selection outline is
+ * drawn on an overlay layer, never injected into the source.
  */
-export function SceneStage({ source, tool, onCreateBox }: SceneStageProps) {
+export function SceneStage({
+  source,
+  tool,
+  selectedHandle,
+  onCreateBox,
+  onSelectBox,
+}: SceneStageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [outline, setOutline] = useState<DOMRect | null>(null)
 
+  // Box-tool marquee/click → canvas-relative placement.
   function onPointerDown(event: ReactPointerEvent) {
     if (tool !== 'box') return
     const rect = canvasPageRect(iframeRef.current)
@@ -95,14 +109,87 @@ export function SceneStage({ source, tool, onCreateBox }: SceneStageProps) {
     })
   }
 
+  // The Select tool hit-tests clicks inside the iframe via `data-bc`. The
+  // listener lives on the iframe document so the scene's own JS still runs.
+  const onSelectRef = useRef(onSelectBox)
+  const toolRef = useRef(tool)
+  onSelectRef.current = onSelectBox
+  toolRef.current = tool
+
+  // Measure the selected box and size the outline to it. Reads the iframe's
+  // *current* document each call — `srcDoc` reloads swap it out, so a captured
+  // reference would go stale. Coordinates are iframe-relative (the overlay layer
+  // is aligned to the iframe), so no offset subtraction is needed.
+  const selectedRef = useRef(selectedHandle)
+  selectedRef.current = selectedHandle
+  const measureOutline = useRef(() => {})
+  measureOutline.current = () => {
+    const doc = iframeRef.current?.contentDocument
+    const handle = selectedRef.current
+    const el = handle && doc?.querySelector(`[data-bc="${handle}"]`)
+    if (!el) {
+      setOutline(null)
+      return
+    }
+    const b = el.getBoundingClientRect()
+    setOutline(new DOMRect(b.left, b.top, b.width, b.height))
+  }
+
+  useEffect(function bindIframe() {
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    function onLoad() {
+      const doc = iframe!.contentDocument
+      if (doc) {
+        doc.addEventListener('click', function hitTest(event) {
+          if (toolRef.current !== 'select') return
+          const target = event.target as Element | null
+          const handle = target?.closest('[data-bc]')?.getAttribute('data-bc')
+          if (handle) onSelectRef.current(handle)
+        })
+      }
+      measureOutline.current() // re-align once the new render has painted
+    }
+
+    iframe.addEventListener('load', onLoad)
+    return function unbind() {
+      iframe.removeEventListener('load', onLoad)
+    }
+  }, [])
+
+  // Re-align the outline when the selection or source changes.
+  useLayoutEffect(
+    function positionOutline() {
+      measureOutline.current()
+      const id = window.setTimeout(() => measureOutline.current(), 60)
+      return () => window.clearTimeout(id)
+    },
+    [selectedHandle, source],
+  )
+
   return (
     <div className="bg-muted/30 relative h-full w-full">
       <iframe
         ref={iframeRef}
         title="Scene preview"
-        srcDoc={source}
+        srcDoc={instrument(source)}
         className="h-full w-full border-0"
       />
+
+      {outline && (
+        <div
+          data-testid="selection-outline"
+          className="ring-primary pointer-events-none absolute z-10 ring-2"
+          style={{
+            left: outline.left,
+            top: outline.top,
+            width: outline.width,
+            height: outline.height,
+          }}
+        />
+      )}
+
       {tool === 'box' && (
         <div
           data-testid="box-overlay"

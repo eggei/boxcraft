@@ -3,17 +3,37 @@ import { useScene } from '@/scene/useScene'
 import { SceneEditor, type SceneEditorHandle } from '@/scene/SceneEditor'
 import { SceneStage } from '@/scene/SceneStage'
 import { Toolbar, type Tool } from '@/scene/Toolbar'
-import type { BoxPlacement } from '@/scene/document'
+import { listBoxes, type BoxPlacement } from '@/scene/document'
 
 function App() {
   const { scene, status, update } = useScene()
   const [tool, setTool] = useState<Tool>('select')
+  const [selectedHandle, setSelectedHandle] = useState<string | null>(null)
   const editorRef = useRef<SceneEditorHandle>(null)
 
   function handleCreateBox(placement: BoxPlacement) {
     editorRef.current?.createBox(placement)
     setTool('select') // tool reverts to Select after creation
   }
+
+  function handleSelectBox(handle: string) {
+    setSelectedHandle(handle)
+    editorRef.current?.selectBox(handle)
+  }
+
+  function handleRename() {
+    if (!selectedHandle || !scene) return
+    const box = listBoxes(scene.source).find((b) => b.handle === selectedHandle)
+    if (!box) return
+    const next = window.prompt('Rename box', box.className)?.trim()
+    if (!next || next === box.className) return
+    editorRef.current?.renameBox(selectedHandle, next)
+  }
+
+  const selectedBox =
+    scene && selectedHandle
+      ? listBoxes(scene.source).find((b) => b.handle === selectedHandle)
+      : undefined
 
   return (
     <div className="flex h-svh flex-col">
@@ -38,6 +58,7 @@ function App() {
               ref={editorRef}
               value={scene.source}
               onChange={(source) => update({ source })}
+              onCursorBox={setSelectedHandle}
             />
           </div>
           <div className="relative min-h-0">
@@ -45,8 +66,24 @@ function App() {
             <SceneStage
               source={scene.source}
               tool={tool}
+              selectedHandle={selectedHandle}
               onCreateBox={handleCreateBox}
+              onSelectBox={handleSelectBox}
             />
+            {selectedBox && (
+              <div className="bg-background absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-md">
+                <span className="text-muted-foreground">
+                  <code>.{selectedBox.className}</code>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRename}
+                  className="hover:bg-muted rounded-md border px-2 py-1"
+                >
+                  Rename
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
