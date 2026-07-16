@@ -78,3 +78,24 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * Managed-token decorations in the editor. A chip marks a class/id that
+ * resolves to a live box; the error style marks one whose element is gone.
+ * `bc-selected-rule` tints the rule of the selected box.
+ */
+.bc-chip {
+  border-radius: 4px;
+  padding: 0 2px;
+  background: color-mix(in oklch, var(--primary) 16%, transparent);
+  outline: 1px solid color-mix(in oklch, var(--primary) 35%, transparent);
+}
+.bc-error {
+  border-radius: 4px;
+  padding: 0 2px;
+  background: color-mix(in oklch, var(--destructive) 18%, transparent);
+  outline: 1px solid color-mix(in oklch, var(--destructive) 45%, transparent);
+}
+.bc-selected-rule {
+  background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
