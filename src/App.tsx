@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { LayoutGroup, motion } from 'framer-motion'
-import { Plus } from 'lucide-react'
+import { Moon, Plus, Sun } from 'lucide-react'
 import { useScenes } from '@/scenes/useScenes'
 import { SceneFeed } from '@/scenes/SceneFeed'
 import { FilesView } from '@/scenes/FilesView'
 import { ArchivedView } from '@/scenes/ArchivedView'
 import { SceneEditorPane } from '@/scene/SceneEditorPane'
 import { activeScenes } from '@/scenes/sceneList'
-import { zoom, type Level } from '@/scenes/navigation'
-
-const ZOOM_COOLDOWN_MS = 350
+import { type Level } from '@/scenes/navigation'
+import { useTheme } from '@/theme/useTheme'
 
 function App() {
   const {
@@ -24,11 +23,12 @@ function App() {
     updateSource,
   } = useScenes()
 
+  const { theme, toggle: toggleTheme } = useTheme()
+
   const [level, setLevel] = useState<Level>('feed')
   const [index, setIndex] = useState(0)
   const [showArchived, setShowArchived] = useState(false)
   const [undoId, setUndoId] = useState<string | null>(null)
-  const lastZoom = useRef(0)
 
   const active = activeScenes(scenes)
   const focusedIndex = Math.min(index, Math.max(0, active.length - 1))
@@ -37,6 +37,20 @@ function App() {
   const startEditing = useCallback(() => {
     if (active.length > 0) setLevel('edit')
   }, [active.length])
+
+  /** Open a scene by its position among the active ones, straight into editing. */
+  const openForEditing = useCallback((i: number) => {
+    setIndex(i)
+    setLevel('edit')
+  }, [])
+
+  // A new scene is appended last, so its index is the pre-add active count. It
+  // lands in the editor directly — a blank card in the feed has nothing to show.
+  const handleNewScene = useCallback(() => {
+    addScene()
+    setShowArchived(false)
+    openForEditing(active.length)
+  }, [addScene, active.length, openForEditing])
 
   // Soft-delete = archive + an undo toast (no confirm dialog).
   const handleDelete = useCallback(
@@ -83,31 +97,14 @@ function App() {
         if (event.metaKey || event.ctrlKey || event.altKey || inField) return
         if (event.key === 'n' || event.key === 'N') {
           event.preventDefault()
-          addScene()
-          setShowArchived(false)
-          setLevel('feed')
+          handleNewScene()
         }
       }
       window.addEventListener('keydown', onKeyDown)
       return () => window.removeEventListener('keydown', onKeyDown)
     },
-    [addScene, startEditing, level],
+    [handleNewScene, startEditing, level],
   )
-
-  // ⌘/Ctrl + scroll changes zoom level (scroll up = out toward files, down =
-  // in toward editing). Plain scroll is left alone so it stays within a level.
-  useEffect(function zoomGesture() {
-    function onWheel(event: WheelEvent) {
-      if (!(event.metaKey || event.ctrlKey)) return
-      event.preventDefault()
-      const now = Date.now()
-      if (now - lastZoom.current < ZOOM_COOLDOWN_MS) return
-      lastZoom.current = now
-      setLevel((current) => zoom(current, event.deltaY > 0 ? 'in' : 'out'))
-    }
-    window.addEventListener('wheel', onWheel, { passive: false })
-    return () => window.removeEventListener('wheel', onWheel)
-  }, [])
 
   function openFromFiles(i: number) {
     setIndex(i)
@@ -127,6 +124,24 @@ function App() {
           />
         )}
         <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={
+            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+          }
+          title={
+            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+          }
+          className="hover:bg-muted text-muted-foreground rounded-md border p-2"
+        >
+          {theme === 'dark' ? (
+            <Sun className="size-4" />
+          ) : (
+            <Moon className="size-4" />
+          )}
+        </button>
 
         {!showArchived && level !== 'files' && (
           <HeaderButton onClick={() => setLevel('files')}>Files</HeaderButton>
@@ -153,10 +168,7 @@ function App() {
         {!showArchived && level !== 'edit' && (
           <button
             type="button"
-            onClick={() => {
-              addScene()
-              setLevel('feed')
-            }}
+            onClick={handleNewScene}
             className="bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm"
           >
             <Plus className="size-4" />
@@ -195,6 +207,7 @@ function App() {
                   onArchive={archiveScene}
                   onDelete={handleDelete}
                   onCurrentIndexChange={setIndex}
+                  onOpen={openForEditing}
                 />
               )}
               {level === 'edit' && focused && (

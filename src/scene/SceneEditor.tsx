@@ -5,6 +5,7 @@ import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirr
 import type { Extension } from '@codemirror/state'
 import { html } from '@codemirror/lang-html'
 import { basicSetup } from 'codemirror'
+import { editorTheme } from './editorTheme'
 import {
   attachJs,
   boxAtOffset,
@@ -126,6 +127,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
 
       const extensions: Extension[] = [
         basicSetup,
+        editorTheme,
         html(),
         EditorView.lineWrapping,
         chipPlugin,

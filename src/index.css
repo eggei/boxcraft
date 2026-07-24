@@ -22,6 +22,18 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+
+  /* Editor syntax palette, consumed by src/scene/editorTheme.ts. */
+  --cm-comment: #6e7781;
+  --cm-keyword: #cf222e;
+  --cm-tag: #116329;
+  --cm-attribute: #0550ae;
+  --cm-string: #0a3069;
+  --cm-number: #0550ae;
+  --cm-type: #953800;
+  --cm-function: #8250df;
+  --cm-variable: #24292f;
+  --cm-punctuation: #57606a;
 }
 
 .dark {
@@ -43,6 +55,17 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+
+  --cm-comment: #8b949e;
+  --cm-keyword: #ff7b72;
+  --cm-tag: #7ee787;
+  --cm-attribute: #79c0ff;
+  --cm-string: #a5d6ff;
+  --cm-number: #79c0ff;
+  --cm-type: #ffa657;
+  --cm-function: #d2a8ff;
+  --cm-variable: #e6edf3;
+  --cm-punctuation: #8b949e;
 }
 
 @theme inline {

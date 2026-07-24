@@ -5,6 +5,26 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BoxCraft</title>
+    <!--
+      Apply the theme before first paint so the page never flashes light on the
+      way to dark. Mirrors src/theme/theme.ts — keep the key and the fallback
+      rule in sync with it.
+    -->
+    <script>
+      try {
+        var stored = localStorage.getItem('boxcraft:theme')
+        var dark =
+          stored === 'dark' ||
+          (stored !== 'light' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches)
+        if (dark) {
+          document.documentElement.classList.add('dark')
+          document.documentElement.style.colorScheme = 'dark'
+        }
+      } catch (error) {
+        // No stored preference available; React will settle the theme on mount.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
