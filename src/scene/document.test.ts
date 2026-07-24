@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SOURCE } from './useScene'
+import { DEFAULT_SOURCE } from '@/scenes/sceneList'
 import {
   attachJs,
   boxAtOffset,

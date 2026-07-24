@@ -1,118 +1,248 @@
-import { useRef, useState } from 'react'
-import { useScene } from '@/scene/useScene'
-import { SceneEditor, type SceneEditorHandle } from '@/scene/SceneEditor'
-import { SceneStage } from '@/scene/SceneStage'
-import { Toolbar, type Tool } from '@/scene/Toolbar'
-import { listBoxes, type BoxPlacement } from '@/scene/document'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { LayoutGroup, motion } from 'framer-motion'
+import { Plus } from 'lucide-react'
+import { useScenes } from '@/scenes/useScenes'
+import { SceneFeed } from '@/scenes/SceneFeed'
+import { FilesView } from '@/scenes/FilesView'
+import { ArchivedView } from '@/scenes/ArchivedView'
+import { SceneEditorPane } from '@/scene/SceneEditorPane'
+import { activeScenes } from '@/scenes/sceneList'
+import { zoom, type Level } from '@/scenes/navigation'
+
+const ZOOM_COOLDOWN_MS = 350
 
 function App() {
-  const { scene, status, update } = useScene()
-  const [tool, setTool] = useState<Tool>('select')
-  const [selectedHandle, setSelectedHandle] = useState<string | null>(null)
-  const editorRef = useRef<SceneEditorHandle>(null)
+  const {
+    scenes,
+    status,
+    addScene,
+    duplicateScene,
+    archiveScene,
+    unarchiveScene,
+    renameScene,
+    reorderScenes,
+    updateSource,
+  } = useScenes()
 
-  function handleCreateBox(placement: BoxPlacement) {
-    editorRef.current?.createBox(placement)
-    setTool('select') // tool reverts to Select after creation
+  const [level, setLevel] = useState<Level>('feed')
+  const [index, setIndex] = useState(0)
+  const [showArchived, setShowArchived] = useState(false)
+  const [undoId, setUndoId] = useState<string | null>(null)
+  const lastZoom = useRef(0)
+
+  const active = activeScenes(scenes)
+  const focusedIndex = Math.min(index, Math.max(0, active.length - 1))
+  const focused = active[focusedIndex]
+
+  const startEditing = useCallback(() => {
+    if (active.length > 0) setLevel('edit')
+  }, [active.length])
+
+  // Soft-delete = archive + an undo toast (no confirm dialog).
+  const handleDelete = useCallback(
+    (id: string) => {
+      archiveScene(id)
+      setUndoId(id)
+    },
+    [archiveScene],
+  )
+
+  const handleUndo = useCallback(() => {
+    if (undoId) unarchiveScene(undoId)
+    setUndoId(null)
+  }, [undoId, unarchiveScene])
+
+  useEffect(
+    function dismissToast() {
+      if (!undoId) return
+      const timer = setTimeout(() => setUndoId(null), 6000)
+      return () => clearTimeout(timer)
+    },
+    [undoId],
+  )
+
+  // Keyboard: N = new scene, ⌘/Ctrl+Enter = Start Editing, Esc = exit editing.
+  useEffect(
+    function keyboardShortcuts() {
+      function onKeyDown(event: KeyboardEvent) {
+        const target = event.target as HTMLElement | null
+        const inField =
+          target?.tagName === 'INPUT' ||
+          target?.tagName === 'TEXTAREA' ||
+          target?.isContentEditable
+
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault()
+          startEditing()
+          return
+        }
+        if (event.key === 'Escape' && level === 'edit') {
+          setLevel('feed')
+          return
+        }
+        if (event.metaKey || event.ctrlKey || event.altKey || inField) return
+        if (event.key === 'n' || event.key === 'N') {
+          event.preventDefault()
+          addScene()
+          setShowArchived(false)
+          setLevel('feed')
+        }
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
+    },
+    [addScene, startEditing, level],
+  )
+
+  // ⌘/Ctrl + scroll changes zoom level (scroll up = out toward files, down =
+  // in toward editing). Plain scroll is left alone so it stays within a level.
+  useEffect(function zoomGesture() {
+    function onWheel(event: WheelEvent) {
+      if (!(event.metaKey || event.ctrlKey)) return
+      event.preventDefault()
+      const now = Date.now()
+      if (now - lastZoom.current < ZOOM_COOLDOWN_MS) return
+      lastZoom.current = now
+      setLevel((current) => zoom(current, event.deltaY > 0 ? 'in' : 'out'))
+    }
+    window.addEventListener('wheel', onWheel, { passive: false })
+    return () => window.removeEventListener('wheel', onWheel)
+  }, [])
+
+  function openFromFiles(i: number) {
+    setIndex(i)
+    setLevel('feed')
   }
-
-  function handleSelectBox(handle: string) {
-    setSelectedHandle(handle)
-    editorRef.current?.selectBox(handle)
-  }
-
-  function handleAttachJs(handle: string) {
-    setSelectedHandle(handle)
-    editorRef.current?.attachJs(handle)
-    setTool('select') // tool reverts to Select after attaching
-  }
-
-  function handleDetachJs() {
-    if (selectedHandle) editorRef.current?.detachJs(selectedHandle)
-  }
-
-  function handleRename() {
-    if (!selectedHandle || !scene) return
-    const box = listBoxes(scene.source).find((b) => b.handle === selectedHandle)
-    if (!box) return
-    const next = window.prompt('Rename box', box.className)?.trim()
-    if (!next || next === box.className) return
-    editorRef.current?.renameBox(selectedHandle, next)
-  }
-
-  const selectedBox =
-    scene && selectedHandle
-      ? listBoxes(scene.source).find((b) => b.handle === selectedHandle)
-      : undefined
-  const selectedHasJs =
-    !!selectedBox &&
-    scene!.source.includes(`getElementById('${selectedBox.className}')`)
 
   return (
     <div className="flex h-svh flex-col">
-      <header className="flex items-center gap-3 border-b px-4 py-2">
+      <header className="flex items-center gap-2 border-b px-4 py-2">
         <h1 className="text-lg font-semibold tracking-tight">BoxCraft</h1>
-        {scene && (
+        {level === 'edit' && focused && (
           <input
             aria-label="Scene title"
-            className="border-input focus-visible:ring-ring rounded-md border bg-transparent px-2 py-1 text-sm outline-none focus-visible:ring-[3px]"
-            value={scene.title}
-            onChange={(event) => update({ title: event.target.value })}
+            className="border-input focus-visible:ring-ring ml-2 rounded-md border bg-transparent px-2 py-1 text-sm outline-none focus-visible:ring-[3px]"
+            value={focused.title}
+            onChange={(event) => renameScene(focused.id, event.target.value)}
           />
+        )}
+        <div className="flex-1" />
+
+        {!showArchived && level !== 'files' && (
+          <HeaderButton onClick={() => setLevel('files')}>Files</HeaderButton>
+        )}
+        {!showArchived && level === 'files' && (
+          <HeaderButton onClick={() => setLevel('feed')}>Feed</HeaderButton>
+        )}
+        {!showArchived && level === 'feed' && (
+          <HeaderButton onClick={startEditing}>
+            Start Editing (⌘+Enter)
+          </HeaderButton>
+        )}
+        {!showArchived && level === 'edit' && (
+          <HeaderButton onClick={() => setLevel('feed')}>
+            Exit (Esc)
+          </HeaderButton>
+        )}
+
+        {level !== 'edit' && (
+          <HeaderButton onClick={() => setShowArchived((v) => !v)}>
+            {showArchived ? 'Back to feed' : 'Archived'}
+          </HeaderButton>
+        )}
+        {!showArchived && level !== 'edit' && (
+          <button
+            type="button"
+            onClick={() => {
+              addScene()
+              setLevel('feed')
+            }}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm"
+          >
+            <Plus className="size-4" />
+            New
+          </button>
         )}
       </header>
 
-      {status === 'loading' || !scene ? (
-        <p className="text-muted-foreground p-8 text-sm">Loading…</p>
-      ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-2">
-          <div className="min-h-0 overflow-hidden border-r">
-            <SceneEditor
-              ref={editorRef}
-              value={scene.source}
-              onChange={(source) => update({ source })}
-              onCursorBox={setSelectedHandle}
-            />
-          </div>
-          <div className="relative min-h-0">
-            <Toolbar tool={tool} onToolChange={setTool} />
-            <SceneStage
-              source={scene.source}
-              tool={tool}
-              selectedHandle={selectedHandle}
-              onCreateBox={handleCreateBox}
-              onSelectBox={handleSelectBox}
-              onAttachJs={handleAttachJs}
-            />
-            {selectedBox && (
-              <div className="bg-background absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-md">
-                <span className="text-muted-foreground">
-                  <code>.{selectedBox.className}</code>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleRename}
-                  className="hover:bg-muted rounded-md border px-2 py-1"
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={
-                    selectedHasJs
-                      ? handleDetachJs
-                      : () => handleAttachJs(selectedHandle!)
-                  }
-                  className="hover:bg-muted rounded-md border px-2 py-1"
-                >
-                  {selectedHasJs ? 'Detach JS' : 'Attach JS'}
-                </button>
-              </div>
-            )}
-          </div>
+      <main className="min-h-0 flex-1">
+        {status === 'loading' ? (
+          <p className="text-muted-foreground p-8 text-sm">Loading…</p>
+        ) : showArchived ? (
+          <ArchivedView scenes={scenes} onUnarchive={unarchiveScene} />
+        ) : (
+          <LayoutGroup>
+            <motion.div
+              key={level}
+              className="h-full"
+              initial={{ opacity: 0, scale: level === 'files' ? 1.04 : 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+            >
+              {level === 'files' && (
+                <FilesView
+                  scenes={scenes}
+                  onOpen={openFromFiles}
+                  onReorder={reorderScenes}
+                />
+              )}
+              {level === 'feed' && (
+                <SceneFeed
+                  scenes={scenes}
+                  focusIndex={focusedIndex}
+                  onRename={renameScene}
+                  onDuplicate={duplicateScene}
+                  onArchive={archiveScene}
+                  onDelete={handleDelete}
+                  onCurrentIndexChange={setIndex}
+                />
+              )}
+              {level === 'edit' && focused && (
+                <SceneEditorPane
+                  key={focused.id}
+                  source={focused.source}
+                  onChange={(source) => updateSource(focused.id, source)}
+                />
+              )}
+            </motion.div>
+          </LayoutGroup>
+        )}
+      </main>
+
+      {undoId && (
+        <div
+          role="status"
+          className="bg-background fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-md"
+        >
+          <span>Scene deleted</span>
+          <button
+            type="button"
+            onClick={handleUndo}
+            className="font-medium underline underline-offset-2"
+          >
+            Undo
+          </button>
         </div>
       )}
     </div>
+  )
+}
+
+function HeaderButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+    >
+      {children}
+    </button>
   )
 }
 
