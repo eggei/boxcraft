@@ -9,6 +9,8 @@ import { SceneEditorPane } from '@/scene/SceneEditorPane'
 import { activeScenes } from '@/scenes/sceneList'
 import { type Level } from '@/scenes/navigation'
 import { useTheme } from '@/theme/useTheme'
+import { usePalette } from '@/theme/usePalette'
+import { PalettePicker } from '@/theme/PalettePicker'
 
 function App() {
   const {
@@ -24,6 +26,7 @@ function App() {
   } = useScenes()
 
   const { theme, toggle: toggleTheme } = useTheme()
+  const { palette, select: selectPalette } = usePalette()
 
   const [level, setLevel] = useState<Level>('feed')
   const [index, setIndex] = useState(0)
@@ -125,6 +128,12 @@ function App() {
         )}
         <div className="flex-1" />
 
+        <PalettePicker
+          palette={palette}
+          theme={theme}
+          onSelect={selectPalette}
+        />
+
         <button
           type="button"
           onClick={toggleTheme}
@@ -225,7 +234,7 @@ function App() {
       {undoId && (
         <div
           role="status"
-          className="bg-background fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-md"
+          className="bg-panel-raised shadow-panel fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm"
         >
           <span>Scene deleted</span>
           <button

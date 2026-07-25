@@ -71,17 +71,20 @@ describe('App', () => {
 
     // jsdom reports no dark OS preference, so the app starts light.
     expect(root).not.toHaveClass('dark')
+    expect(root.dataset.theme).toBe('light')
 
     await user.click(
       screen.getByRole('button', { name: 'Switch to dark theme' }),
     )
     expect(root).toHaveClass('dark')
+    expect(root.dataset.theme).toBe('dark')
     expect(localStorage.getItem('boxcraft:theme')).toBe('dark')
 
     await user.click(
       screen.getByRole('button', { name: 'Switch to light theme' }),
     )
     expect(root).not.toHaveClass('dark')
+    expect(root.dataset.theme).toBe('light')
     expect(localStorage.getItem('boxcraft:theme')).toBe('light')
   })
 
@@ -90,5 +93,31 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByTestId('scene-card')
     expect(document.documentElement).toHaveClass('dark')
+  })
+
+  it('starts on the default palette and switches to the one picked', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findAllByTestId('scene-card')
+    const root = document.documentElement
+
+    expect(root.dataset.palette).toBe('paper')
+
+    await user.click(screen.getByRole('button', { name: /Color palette/ }))
+    await user.click(screen.getByRole('menuitemradio', { name: 'Graphite' }))
+
+    expect(root.dataset.palette).toBe('graphite')
+    expect(localStorage.getItem('boxcraft:palette')).toBe('graphite')
+  })
+
+  it('restores a stored palette on load', async () => {
+    localStorage.setItem('boxcraft:palette', 'graphite')
+    render(<App />)
+    await screen.findAllByTestId('scene-card')
+
+    expect(document.documentElement.dataset.palette).toBe('graphite')
+    expect(
+      screen.getByRole('button', { name: 'Color palette: Graphite' }),
+    ).toBeInTheDocument()
   })
 })

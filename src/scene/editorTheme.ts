@@ -7,8 +7,8 @@ import { tags as t } from '@lezer/highlight'
  * CodeMirror styling for the scene source, expressed entirely in the app's CSS
  * custom properties (chrome from the shadcn tokens, syntax from the `--cm-*`
  * ones in index.css). Because the values are `var()` references resolved at
- * paint time, the editor follows `<html class="dark">` on its own — no
- * reconfiguration and no theme prop threaded down to the editor.
+ * paint time, the editor follows the palette and theme attributes on <html> on
+ * its own — no reconfiguration and no props threaded down to the editor.
  */
 const chrome = EditorView.theme({
   '&': {
@@ -55,8 +55,10 @@ const chrome = EditorView.theme({
     border: '1px solid var(--border)',
   },
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-    backgroundColor: 'var(--accent)',
-    color: 'var(--accent-foreground)',
+    // The palette's accent tint, not `--accent` — that one is the full-strength
+    // brand colour and would swamp the highlighted row.
+    backgroundColor: 'var(--accent-weak)',
+    color: 'var(--foreground)',
   },
 })
 

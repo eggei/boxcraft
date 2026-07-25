@@ -2,26 +2,147 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * ---------------------------------------------------------------------------
+ * Palettes
+ * ---------------------------------------------------------------------------
+ * Colour lives on two independent axes: the palette (`data-palette`) and the
+ * theme (`data-theme`). Every palette defines the same token set twice, once
+ * per theme, so switching either axis is a single attribute flip on <html>.
+ *
+ * The blocks below are the only place raw colour values appear. Everything
+ * else — the shadcn tokens further down, the Tailwind utilities, the editor
+ * theme — is expressed in terms of these tokens.
+ *
+ * The selectors are attribute-only (not `:root`-qualified) on purpose: the
+ * picker's preview swatches set `data-palette`/`data-theme` on a plain <span>,
+ * so a handful of boxes can render another palette's colours in place without
+ * the values being duplicated in JS.
+ *
+ * Tokens, surface-to-ink:
+ *   --canvas        the scene's own page — deliberately light in both themes,
+ *                   because a scene is authored on white paper
+ *   --bg            app background
+ *   --panel         recessed / muted surface
+ *   --panel-raised  floating surface (toolbars, popovers, toasts)
+ *   --line          borders and dividers
+ *   --text          primary ink
+ *   --text-muted    secondary ink
+ *   --accent        brand accent (selection, primary actions)
+ *   --accent-weak   accent tint for hovers and subtle fills
+ *   --accent-fg     ink on top of --accent
+ *   --shadow        the palette's box-shadow for raised panels
+ */
+
+/* Paper — warm, off-white. The default. */
+[data-palette='paper'] {
+  --canvas: #fdfbf6;
+  --bg: #f3efe6;
+  --panel: #eae5d9;
+  --panel-raised: #fdfbf6;
+  --line: #ded8ca;
+  --text: #221f1a;
+  --text-muted: #8d8679;
+  --accent: oklch(0.62 0.075 200);
+  --accent-weak: oklch(0.94 0.02 200);
+  --accent-fg: #fdfbf6;
+  --shadow: 0 1px 3px rgb(60 50 30 / 0.1);
+}
+
+[data-palette='paper'][data-theme='dark'] {
+  --canvas: #fdfbf6; /* unchanged on purpose */
+  --bg: #413d37;
+  --panel: #4d4842;
+  --panel-raised: #565049;
+  --line: #5c574f;
+  --text: #f2eee6;
+  --text-muted: #b1aa9d;
+  --accent: oklch(0.7 0.075 200);
+  --accent-weak: oklch(0.46 0.04 200);
+  --accent-fg: #241f19;
+  --shadow: 0 1px 8px rgb(20 15 8 / 0.3);
+}
+
+/* Graphite — cool, neutral grey. */
+[data-palette='graphite'] {
+  --canvas: #fbfbf9;
+  --bg: #f1f1f0;
+  --panel: #e8e8e7;
+  --panel-raised: #fbfbf9;
+  --line: #dcdcda;
+  --text: #1b1c1e;
+  --text-muted: #87878a;
+  --accent: oklch(0.62 0.075 200);
+  --accent-weak: oklch(0.94 0.02 200);
+  --accent-fg: #fbfbf9;
+  --shadow: 0 1px 3px rgb(15 18 25 / 0.1);
+}
+
+[data-palette='graphite'][data-theme='dark'] {
+  --canvas: #fbfbf9;
+  --bg: #3b3d41;
+  --panel: #46484d;
+  --panel-raised: #4f5157;
+  --line: #55575e;
+  --text: #eeeff1;
+  --text-muted: #a9abb0;
+  --accent: oklch(0.7 0.075 200);
+  --accent-weak: oklch(0.46 0.04 200);
+  --accent-fg: #1d1f22;
+  --shadow: 0 1px 8px rgb(8 10 14 / 0.32);
+}
+
+/*
+ * The pre-paint script in index.html stamps `data-palette` before first paint,
+ * so this only covers the no-JS case: fall back to Paper's light tokens.
+ * `:where()` keeps it at zero specificity, so any real palette block wins.
+ */
+:where(:root:not([data-palette])) {
+  --canvas: #fdfbf6;
+  --bg: #f3efe6;
+  --panel: #eae5d9;
+  --panel-raised: #fdfbf6;
+  --line: #ded8ca;
+  --text: #221f1a;
+  --text-muted: #8d8679;
+  --accent: oklch(0.62 0.075 200);
+  --accent-weak: oklch(0.94 0.02 200);
+  --accent-fg: #fdfbf6;
+  --shadow: 0 1px 3px rgb(60 50 30 / 0.1);
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Derived tokens
+ * ---------------------------------------------------------------------------
+ * The shadcn token names the components are written against, mapped onto the
+ * palette above. Note that shadcn's `--accent` (a subtle hover fill) collides
+ * with the palette's `--accent` (the brand colour), so it is deliberately not
+ * redefined here — `@theme inline` points the `accent` utilities at
+ * `--accent-weak` instead, leaving `--accent` to mean the brand colour
+ * everywhere.
+ */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--panel-raised);
+  --card-foreground: var(--text);
+  --popover: var(--panel-raised);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-fg);
+  --secondary: var(--panel);
+  --secondary-foreground: var(--text);
+  --muted: var(--panel);
+  --muted-foreground: var(--text-muted);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--accent);
+
+  /* Palette-independent: red reads as red in every palette. */
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
 
   /* Editor syntax palette, consumed by src/scene/editorTheme.ts. */
   --cm-comment: #6e7781;
@@ -36,25 +157,8 @@
   --cm-punctuation: #57606a;
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+:root[data-theme='dark'] {
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
 
   --cm-comment: #8b949e;
   --cm-keyword: #ff7b72;
@@ -85,12 +189,18 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent-weak);
+  --color-accent-foreground: var(--text);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* Palette tokens with no shadcn equivalent, exposed as utilities. */
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --shadow-panel: var(--shadow);
 }
 
 @layer base {

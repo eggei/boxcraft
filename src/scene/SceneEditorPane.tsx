@@ -78,7 +78,7 @@ export function SceneEditorPane({
           onAttachJs={handleAttachJs}
         />
         {selectedBox && (
-          <div className="bg-background absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-md">
+          <div className="bg-panel-raised shadow-panel absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
             <span className="text-muted-foreground">
               <code>.{selectedBox.className}</code>
             </span>
