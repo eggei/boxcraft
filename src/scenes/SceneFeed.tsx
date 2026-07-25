@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Copy, Archive, Trash2 } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
 import { activeScenes, CANVAS_SIZE, type Scene } from './sceneList'
 import { ScenePreview } from './ScenePreview'
 
@@ -116,13 +117,25 @@ export function SceneFeed({
               value={scene.title}
               onChange={(event) => onRename(scene.id, event.target.value)}
             />
-            <IconButton label="Duplicate" onClick={() => onDuplicate(scene.id)}>
+            <IconButton
+              label="Duplicate"
+              tip="Make a copy of this scene"
+              onClick={() => onDuplicate(scene.id)}
+            >
               <Copy className="size-4" />
             </IconButton>
-            <IconButton label="Archive" onClick={() => onArchive(scene.id)}>
+            <IconButton
+              label="Archive"
+              tip="Move this scene out of the feed and into the archive"
+              onClick={() => onArchive(scene.id)}
+            >
               <Archive className="size-4" />
             </IconButton>
-            <IconButton label="Delete" onClick={() => onDelete(scene.id)}>
+            <IconButton
+              label="Delete"
+              tip="Delete this scene — there's a brief undo afterwards"
+              onClick={() => onDelete(scene.id)}
+            >
               <Trash2 className="size-4" />
             </IconButton>
           </div>
@@ -150,22 +163,27 @@ export function SceneFeed({
 
 function IconButton({
   label,
+  tip,
   onClick,
   children,
 }: {
+  /** Accessible name — the button is an icon on its own. */
   label: string
+  /** What the action does, for the hover hint. */
+  tip: string
   onClick: () => void
   children: React.ReactNode
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="hover:bg-muted text-muted-foreground rounded-md border p-2"
-    >
-      {children}
-    </button>
+    <WithTooltip tip={tip}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        className="hover:bg-muted text-muted-foreground rounded-md border p-2"
+      >
+        {children}
+      </button>
+    </WithTooltip>
   )
 }

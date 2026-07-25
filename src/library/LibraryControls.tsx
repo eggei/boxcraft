@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Upload } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
 import { activeScenes, type Scene } from '@/scenes/sceneList'
 import {
   buildLibrary,
@@ -96,25 +97,40 @@ export function LibraryControls({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={handleExport}
-        disabled={scenes.length === 0}
-        aria-label="Export library"
-        title="Export library — download every scene as a JSON backup"
-        className="hover:bg-muted text-muted-foreground rounded-md border p-2 disabled:opacity-50"
+      {/*
+        The trigger is the wrapping span, not the button: a disabled button
+        emits no pointer events, and "why is this greyed out?" is exactly when
+        the hint is worth having.
+      */}
+      <WithTooltip
+        tip={
+          scenes.length === 0
+            ? 'Nothing to export yet — the library is empty'
+            : 'Download every scene as a JSON backup'
+        }
       >
-        <Download className="size-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => fileInput.current?.click()}
-        aria-label="Import library"
-        title="Import library — restore scenes from a JSON backup"
-        className="hover:bg-muted text-muted-foreground rounded-md border p-2"
-      >
-        <Upload className="size-4" />
-      </button>
+        <span className="inline-flex">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={scenes.length === 0}
+            aria-label="Export library"
+            className="hover:bg-muted text-muted-foreground rounded-md border p-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Download className="size-4" />
+          </button>
+        </span>
+      </WithTooltip>
+      <WithTooltip tip="Restore scenes from a JSON backup">
+        <button
+          type="button"
+          onClick={() => fileInput.current?.click()}
+          aria-label="Import library"
+          className="hover:bg-muted text-muted-foreground rounded-md border p-2"
+        >
+          <Upload className="size-4" />
+        </button>
+      </WithTooltip>
       <input
         ref={fileInput}
         type="file"
@@ -174,14 +190,16 @@ function ImportDialog({
           <>
             <p className="text-muted-foreground mt-2 text-sm">{error}</p>
             <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                autoFocus
-                onClick={onDismiss}
-                className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
-              >
-                Close
-              </button>
+              <WithTooltip tip="Dismiss — nothing was imported">
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={onDismiss}
+                  className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+                >
+                  Close
+                </button>
+              </WithTooltip>
             </div>
           </>
         ) : (
@@ -202,31 +220,37 @@ function ImportDialog({
                 now with them?
               </p>
               <div className="mt-5 flex flex-wrap justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={onDismiss}
-                  disabled={busy}
-                  className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onConfirm('replace')}
-                  disabled={busy}
-                  className="bg-destructive hover:bg-destructive/90 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                >
-                  Replace library
-                </button>
-                <button
-                  type="button"
-                  autoFocus
-                  onClick={() => onConfirm('merge')}
-                  disabled={busy}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  Add to library
-                </button>
+                <WithTooltip tip="Dismiss — nothing will be imported">
+                  <button
+                    type="button"
+                    onClick={onDismiss}
+                    disabled={busy}
+                    className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </WithTooltip>
+                <WithTooltip tip="Discard every scene you have now and keep only the imported ones">
+                  <button
+                    type="button"
+                    onClick={() => onConfirm('replace')}
+                    disabled={busy}
+                    className="bg-destructive hover:bg-destructive/90 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                  >
+                    Replace library
+                  </button>
+                </WithTooltip>
+                <WithTooltip tip="Keep your scenes and add the imported ones alongside them">
+                  <button
+                    type="button"
+                    autoFocus
+                    onClick={() => onConfirm('merge')}
+                    disabled={busy}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    Add to library
+                  </button>
+                </WithTooltip>
               </div>
             </>
           )

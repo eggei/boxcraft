@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { WithTooltip } from '@/components/ui/tooltip'
 import { SceneEditor, type SceneEditorHandle } from './SceneEditor'
 import { SceneStage } from './SceneStage'
 import { Toolbar, type Tool } from './Toolbar'
@@ -82,22 +83,32 @@ export function SceneEditorPane({
             <span className="text-muted-foreground">
               <code>.{selectedBox.className}</code>
             </span>
-            <button
-              type="button"
-              onClick={handleRename}
-              className="hover:bg-muted rounded-md border px-2 py-1"
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              onClick={
-                selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)
+            <WithTooltip tip="Give this box a different class name">
+              <button
+                type="button"
+                onClick={handleRename}
+                className="hover:bg-muted rounded-md border px-2 py-1"
+              >
+                Rename
+              </button>
+            </WithTooltip>
+            <WithTooltip
+              tip={
+                selectedHasJs
+                  ? "Remove this box's script hook from the source"
+                  : 'Add a script hook for this box to the source'
               }
-              className="hover:bg-muted rounded-md border px-2 py-1"
             >
-              {selectedHasJs ? 'Detach JS' : 'Attach JS'}
-            </button>
+              <button
+                type="button"
+                onClick={
+                  selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)
+                }
+                className="hover:bg-muted rounded-md border px-2 py-1"
+              >
+                {selectedHasJs ? 'Detach JS' : 'Attach JS'}
+              </button>
+            </WithTooltip>
           </div>
         )}
       </div>

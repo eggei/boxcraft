@@ -27,6 +27,16 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('ships both cuts of the logo so the theme can pick one in CSS', async () => {
+    const { container } = renderApp()
+    await screen.findByRole('heading', { name: 'BoxCraft' })
+
+    const sources = [...container.querySelectorAll('header img')].map((img) =>
+      img.getAttribute('src'),
+    )
+    expect(sources).toEqual(['/logo-dark.png', '/logo-light.png'])
+  })
+
   it('seeds example scenes on first run with an empty database', async () => {
     renderApp()
     await screen.findAllByTestId('scene-card')
