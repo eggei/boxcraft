@@ -21,10 +21,21 @@ npm run build    # type-check + build the static bundle to dist/
 npm run preview  # preview the production build
 ```
 
+## Backup & restore
+
+Scenes live in the browser's IndexedDB, so there is nothing to lose but also
+nothing to fall back on. The header's ⬇/⬆ buttons export the whole library —
+active and archived scenes, sources byte-identical — to a dated
+`boxcraft-library-YYYY-MM-DD.json` file, and read one back in. On import you
+choose whether to **add** the file's scenes to what you have or **replace** the
+library with them; ids that would collide are re-issued, so an import never
+overwrites a scene you already had.
+
 ## Layout
 
 - `src/persistence/` — IndexedDB wrapper (`idb.ts`) and the scene store (`scenes.ts`)
 - `src/scene/` — the `useScene` hook (load + continuous autosave)
+- `src/library/` — the export/import file format (`libraryFile.ts`) and its header controls
 - `src/components/ui/` — shadcn/ui components
 
 The build proceeds core-first through five phases; foundation (scaffold,

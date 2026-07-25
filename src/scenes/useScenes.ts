@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getAllScenes, saveScene } from '@/persistence/scenes'
+import {
+  getAllScenes,
+  replaceAllScenes,
+  saveScene,
+} from '@/persistence/scenes'
+import { importScenes, type ImportMode } from '@/library/libraryFile'
 import {
   addScene as addSceneOp,
   archiveScene as archiveOp,
@@ -93,6 +98,21 @@ export function useScenes() {
     )
   }, [])
 
+  /**
+   * Fold an imported library in. Unlike every other operation here this one
+   * writes before the state update: a replace has to remove the records it drops
+   * and autosave can only put, so the store is swapped in one transaction first.
+   */
+  const importLibrary = useCallback(
+    async (incoming: Scene[], mode: ImportMode): Promise<Scene[]> => {
+      const next = importScenes(scenes, incoming, { mode, newId })
+      await replaceAllScenes(next)
+      setScenes(next)
+      return next
+    },
+    [scenes],
+  )
+
   return {
     scenes,
     status,
@@ -103,5 +123,6 @@ export function useScenes() {
     renameScene,
     reorderScenes,
     updateSource,
+    importLibrary,
   }
 }

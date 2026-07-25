@@ -6,9 +6,11 @@ import { SceneFeed } from '@/scenes/SceneFeed'
 import { FilesView } from '@/scenes/FilesView'
 import { ArchivedView } from '@/scenes/ArchivedView'
 import { SceneEditorPane } from '@/scene/SceneEditorPane'
-import { activeScenes } from '@/scenes/sceneList'
+import { activeScenes, type Scene } from '@/scenes/sceneList'
 import { type Level } from '@/scenes/navigation'
 import { useTheme } from '@/theme/useTheme'
+import { LibraryControls } from '@/library/LibraryControls'
+import { type ImportMode } from '@/library/libraryFile'
 
 function App() {
   const {
@@ -21,6 +23,7 @@ function App() {
     renameScene,
     reorderScenes,
     updateSource,
+    importLibrary,
   } = useScenes()
 
   const { theme, toggle: toggleTheme } = useTheme()
@@ -59,6 +62,19 @@ function App() {
       setUndoId(id)
     },
     [archiveScene],
+  )
+
+  // An import can move or drop whatever was focused, so land on the feed's first
+  // scene rather than trying to keep a position that may no longer exist.
+  const handleImport = useCallback(
+    async (incoming: Scene[], mode: ImportMode) => {
+      await importLibrary(incoming, mode)
+      setUndoId(null)
+      setShowArchived(false)
+      setIndex(0)
+      setLevel('feed')
+    },
+    [importLibrary],
   )
 
   const handleUndo = useCallback(() => {
@@ -142,6 +158,10 @@ function App() {
             <Moon className="size-4" />
           )}
         </button>
+
+        {level !== 'edit' && (
+          <LibraryControls scenes={scenes} onImport={handleImport} />
+        )}
 
         {!showArchived && level !== 'files' && (
           <HeaderButton onClick={() => setLevel('files')}>Files</HeaderButton>
