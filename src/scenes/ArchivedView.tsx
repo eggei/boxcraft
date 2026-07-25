@@ -1,4 +1,5 @@
 import { ArchiveRestore } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
 import { archivedScenes, type Scene } from './sceneList'
 import { SceneThumbnail } from './SceneThumbnail'
 
@@ -36,14 +37,16 @@ export function ArchivedView({
             size={THUMBNAIL_SIZE}
           />
           <span className="flex-1 truncate">{scene.title}</span>
-          <button
-            type="button"
-            onClick={() => onUnarchive(scene.id)}
-            className="hover:bg-muted flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1"
-          >
-            <ArchiveRestore className="size-4" />
-            Unarchive
-          </button>
+          <WithTooltip tip="Put this scene back in the feed">
+            <button
+              type="button"
+              onClick={() => onUnarchive(scene.id)}
+              className="hover:bg-muted flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1"
+            >
+              <ArchiveRestore className="size-4" />
+              Unarchive
+            </button>
+          </WithTooltip>
         </li>
       ))}
     </ul>

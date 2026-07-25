@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Braces, MousePointer2, Square } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
 
 export type Tool = 'select' | 'box' | 'js'
 
@@ -8,10 +9,35 @@ interface ToolbarProps {
   onToolChange: (tool: Tool) => void
 }
 
-const TOOLS: { id: Tool; label: string; key: string; Icon: typeof Square }[] = [
-  { id: 'select', label: 'Select', key: 'V', Icon: MousePointer2 },
-  { id: 'box', label: 'Box', key: 'B', Icon: Square },
-  { id: 'js', label: 'Attach JS', key: 'J', Icon: Braces },
+const TOOLS: {
+  id: Tool
+  label: string
+  key: string
+  /** What the tool does once it is picked, for the hover hint. */
+  tip: string
+  Icon: typeof Square
+}[] = [
+  {
+    id: 'select',
+    label: 'Select',
+    key: 'V',
+    tip: 'Pick a box on the stage to select it',
+    Icon: MousePointer2,
+  },
+  {
+    id: 'box',
+    label: 'Box',
+    key: 'B',
+    tip: 'Drag on the stage to draw a new box',
+    Icon: Square,
+  },
+  {
+    id: 'js',
+    label: 'Attach JS',
+    key: 'J',
+    tip: 'Click a box to give it a script hook',
+    Icon: Braces,
+  },
 ]
 
 /**
@@ -47,23 +73,25 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
 
   return (
     <div className="bg-popover shadow-raised absolute top-1/2 left-3 z-10 flex -translate-y-1/2 flex-col gap-1 rounded-lg border p-1">
-      {TOOLS.map(({ id, label, key, Icon }) => (
-        <button
-          key={id}
-          type="button"
-          aria-label={label}
-          aria-pressed={tool === id}
-          title={`${label} (${key})`}
-          onClick={() => onToolChange(id)}
-          className={
-            'flex size-9 items-center justify-center rounded-md transition-colors ' +
-            (tool === id
-              ? 'bg-primary text-primary-foreground'
-              : 'hover:bg-muted text-foreground')
-          }
-        >
-          <Icon className="size-4" />
-        </button>
+      {TOOLS.map(({ id, label, key, tip, Icon }) => (
+        // Side "right": the toolbar hugs the left edge, so a tip anywhere else
+        // would land on the stage it is describing.
+        <WithTooltip key={id} side="right" tip={`${tip} (${key})`}>
+          <button
+            type="button"
+            aria-label={label}
+            aria-pressed={tool === id}
+            onClick={() => onToolChange(id)}
+            className={
+              'flex size-9 items-center justify-center rounded-md transition-colors ' +
+              (tool === id
+                ? 'bg-primary text-primary-foreground'
+                : 'hover:bg-muted text-foreground')
+            }
+          >
+            <Icon className="size-4" />
+          </button>
+        </WithTooltip>
       ))}
     </div>
   )

@@ -18,11 +18,9 @@ import { SceneEditorPane } from '@/scene/SceneEditorPane'
 import { activeScenes, type Scene } from '@/scenes/sceneList'
 import { editPath, feedPath, pageForPath, ROUTES } from '@/scenes/navigation'
 import { useTheme } from '@/theme/useTheme'
+import { WithTooltip } from '@/components/ui/tooltip'
 import { LibraryControls } from '@/library/LibraryControls'
 import { type ImportMode } from '@/library/libraryFile'
-
-/** Served from public/ — same file the favicon points at. */
-const LOGO_SRC = '/logo.png'
 
 /**
  * The shell: header chrome plus the routed pages. Where the app is — files,
@@ -161,7 +159,7 @@ function App() {
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-2 border-b px-4 py-2">
-        <img src={LOGO_SRC} alt="" className="size-7" />
+        <Logo />
         <h1 className="text-lg font-semibold tracking-tight">BoxCraft</h1>
         {editing && (
           <input
@@ -173,57 +171,88 @@ function App() {
         )}
         <div className="flex-1" />
 
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label={
-            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+        <WithTooltip
+          tip={
+            theme === 'dark'
+              ? 'Switch to the light theme'
+              : 'Switch to the dark theme'
           }
-          title={
-            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
-          }
-          className="hover:bg-muted text-muted-foreground rounded-md border p-2"
         >
-          {theme === 'dark' ? (
-            <Sun className="size-4" />
-          ) : (
-            <Moon className="size-4" />
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={
+              theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+            }
+            className="hover:bg-muted text-muted-foreground rounded-md border p-2"
+          >
+            {theme === 'dark' ? (
+              <Sun className="size-4" />
+            ) : (
+              <Moon className="size-4" />
+            )}
+          </button>
+        </WithTooltip>
 
         {page !== 'edit' && (
           <LibraryControls scenes={scenes} onImport={handleImport} />
         )}
 
-        {page === 'feed' && <HeaderLink to={ROUTES.files}>Files</HeaderLink>}
+        {page === 'feed' && (
+          <HeaderLink to={ROUTES.files} tip="Browse every scene as a grid">
+            Files
+          </HeaderLink>
+        )}
         {page === 'files' && (
-          <HeaderLink to={feedPath(feedSceneId)}>Feed</HeaderLink>
+          <HeaderLink
+            to={feedPath(feedSceneId)}
+            tip="Back to the scrolling feed"
+          >
+            Feed
+          </HeaderLink>
         )}
         {page === 'feed' && feedSceneId && (
-          <HeaderLink to={editPath(feedSceneId)}>
+          <HeaderLink
+            to={editPath(feedSceneId)}
+            tip="Open the centered scene in the editor"
+          >
             Start Editing (⌘+Enter)
           </HeaderLink>
         )}
         {page === 'edit' && (
-          <HeaderLink to={feedPath(editing?.id)}>Exit (Esc)</HeaderLink>
+          <HeaderLink
+            to={feedPath(editing?.id)}
+            tip="Leave the editor and go back to this scene in the feed"
+          >
+            Exit (Esc)
+          </HeaderLink>
         )}
 
         {page === 'archived' ? (
-          <HeaderLink to={feedPath()}>Back to feed</HeaderLink>
+          <HeaderLink to={feedPath()} tip="Back to the scrolling feed">
+            Back to feed
+          </HeaderLink>
         ) : (
           page !== 'edit' && (
-            <HeaderLink to={ROUTES.archived}>Archived</HeaderLink>
+            <HeaderLink
+              to={ROUTES.archived}
+              tip="Scenes you've archived — restore them from here"
+            >
+              Archived
+            </HeaderLink>
           )
         )}
         {page !== 'edit' && page !== 'archived' && (
-          <button
-            type="button"
-            onClick={handleNewScene}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm"
-          >
-            <Plus className="size-4" />
-            New
-          </button>
+          <WithTooltip tip="Start a blank scene and open it in the editor (N)">
+            <button
+              type="button"
+              onClick={handleNewScene}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm"
+            >
+              <Plus className="size-4" />
+              New
+            </button>
+          </WithTooltip>
         )}
       </header>
 
@@ -287,13 +316,15 @@ function App() {
           className="bg-popover shadow-raised fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm"
         >
           <span>Scene deleted</span>
-          <button
-            type="button"
-            onClick={handleUndo}
-            className="font-medium underline underline-offset-2"
-          >
-            Undo
-          </button>
+          <WithTooltip tip="Put the deleted scene back in the feed">
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="font-medium underline underline-offset-2"
+            >
+              Undo
+            </button>
+          </WithTooltip>
         </div>
       )}
     </div>
@@ -316,14 +347,41 @@ function useUndoToast() {
   return [undoId, setUndoId] as const
 }
 
-function HeaderLink({ to, children }: { to: string; children: React.ReactNode }) {
+/**
+ * The mark sits on a solid box, so it ships as two cuts: `logo-dark.png` is the
+ * dark-boxed artwork, which is the one that reads on a light page, and
+ * `logo-light.png` is the light-boxed cut for a dark page. Both are in the
+ * markup and CSS picks one — swapping a `src` on toggle would flash the first
+ * time each file is fetched. `logo-light.png` is also the favicon (index.html).
+ */
+function Logo() {
   return (
-    <Link
-      to={to}
-      className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
-    >
-      {children}
-    </Link>
+    <>
+      <img src="/logo-dark.png" alt="" className="size-7 dark:hidden" />
+      <img src="/logo-light.png" alt="" className="hidden size-7 dark:block" />
+    </>
+  )
+}
+
+function HeaderLink({
+  to,
+  tip,
+  children,
+}: {
+  to: string
+  /** What the destination is — the link text alone is only a name. */
+  tip: string
+  children: React.ReactNode
+}) {
+  return (
+    <WithTooltip tip={tip}>
+      <Link
+        to={to}
+        className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+      >
+        {children}
+      </Link>
+    </WithTooltip>
   )
 }
 
