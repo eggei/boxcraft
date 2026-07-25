@@ -15,6 +15,7 @@ export function SceneFeed({
   onArchive,
   onDelete,
   onCurrentIndexChange,
+  onOpen,
 }: {
   scenes: Scene[]
   /** When set, the feed scrolls this card into view on mount. */
@@ -24,6 +25,8 @@ export function SceneFeed({
   onArchive: (id: string) => void
   onDelete: (id: string) => void
   onCurrentIndexChange?: (index: number) => void
+  /** Clicking a card's render opens that scene for editing. */
+  onOpen?: (index: number) => void
 }) {
   const active = activeScenes(scenes)
   const [currentIndex, setCurrentIndex] = useState(focusIndex ?? 0)
@@ -114,16 +117,19 @@ export function SceneFeed({
               <Trash2 className="size-4" />
             </IconButton>
           </div>
-          <motion.div
+          <motion.button
+            type="button"
             layoutId={`scene-${scene.id}`}
-            className="aspect-square w-full max-w-[520px] flex-1"
+            aria-label={`Edit ${scene.title}`}
+            onClick={() => onOpen?.(index)}
+            className="focus-visible:ring-ring aspect-square w-full max-w-[520px] flex-1 cursor-pointer rounded-lg outline-none focus-visible:ring-2"
           >
             <ScenePreview
               source={scene.source}
               title={scene.title}
               live={Math.abs(index - currentIndex) <= WINDOW}
             />
-          </motion.div>
+          </motion.button>
         </section>
       ))}
     </div>

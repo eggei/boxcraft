@@ -4,8 +4,12 @@ import { IDBFactory } from 'fake-indexeddb'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
-// Reset the DOM and the in-memory IndexedDB between tests so each test starts clean.
+// Reset the DOM, the in-memory IndexedDB and the stored theme between tests so
+// each one starts clean.
 afterEach(() => {
   cleanup()
   globalThis.indexedDB = new IDBFactory()
+  localStorage.clear()
+  document.documentElement.classList.remove('dark')
+  document.documentElement.style.colorScheme = ''
 })
