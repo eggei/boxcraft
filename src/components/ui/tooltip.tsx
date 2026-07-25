@@ -33,11 +33,17 @@ function TooltipContent({
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   return (
     <TooltipPrimitive.Portal>
+      {/*
+        Deliberately no `text-balance`: the bubble is always as wide as
+        `max-w-*`, never as wide as its longest line, so evening out the lines
+        just moves the slack to the right edge and reads as lopsided padding.
+        Filling each line in turn keeps that edge tight.
+      */}
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "bg-popover text-popover-foreground shadow-raised z-50 max-w-[15rem] rounded-md border px-2.5 py-1.5 text-xs text-balance",
+          "bg-popover text-popover-foreground shadow-raised z-50 max-w-[15rem] rounded-md border px-2.5 py-1.5 text-xs",
           className,
         )}
         {...props}
