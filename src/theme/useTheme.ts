@@ -25,13 +25,12 @@ function storeTheme(theme: Theme) {
 
 /**
  * React/DOM adapter over the pure theme module: holds the active theme and
- * mirrors it onto <html> three ways — `data-theme` is what the palette token
- * blocks in index.css key off, the `dark` class is what Tailwind's dark variant
+ * mirrors it onto <html> — the `dark` class is what Tailwind's dark variant
  * keys off, and `color-scheme` makes native UI (scrollbars, form controls)
  * follow along. The initial value comes from storage or the OS; toggling is an
  * explicit choice and is persisted.
  *
- * The pre-paint script in index.html applies the same three up front so the
+ * The pre-paint script in index.html applies the same class up front so the
  * page never flashes light before React mounts. Keep the two in sync.
  */
 export function useTheme() {
@@ -42,7 +41,6 @@ export function useTheme() {
   useEffect(
     function applyTheme() {
       const root = document.documentElement
-      root.dataset.theme = theme
       root.classList.toggle('dark', theme === 'dark')
       root.style.colorScheme = theme
     },

@@ -46,7 +46,7 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
   )
 
   return (
-    <div className="bg-panel-raised shadow-panel absolute top-1/2 left-3 z-10 flex -translate-y-1/2 flex-col gap-1 rounded-lg border p-1">
+    <div className="bg-popover shadow-raised absolute top-1/2 left-3 z-10 flex -translate-y-1/2 flex-col gap-1 rounded-lg border p-1">
       {TOOLS.map(({ id, label, key, Icon }) => (
         <button
           key={id}
