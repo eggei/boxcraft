@@ -46,7 +46,7 @@ export function FilesView({
           onClick={() => onOpen(index)}
           className="hover:ring-ring flex w-[240px] flex-col gap-2 rounded-lg text-left hover:ring-2"
         >
-          <div className="relative h-[240px] w-[240px] overflow-hidden rounded-lg border bg-white">
+          <div className="bg-canvas relative h-[240px] w-[240px] overflow-hidden rounded-lg border">
             {/* A big iframe scaled down so the whole 400×400-in-100vh scene fits. */}
             <iframe
               title={`${scene.title} snapshot`}

@@ -2,26 +2,45 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Graphite — a cool, neutral grey palette in place of the stock shadcn
+ * neutrals. Surfaces are hex because they are hand-picked greys; the accent
+ * and the semantic red stay in oklch so tinting and the `color-mix()` calls
+ * further down stay perceptually even.
+ *
+ * Light, surface to ink: page #f1f1f0 · muted #e8e8e7 · raised #fbfbf9 ·
+ * line #dcdcda · ink #1b1c1e · muted ink #87878a.
+ */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --background: #f1f1f0;
+  --foreground: #1b1c1e;
+  --card: #fbfbf9;
+  --card-foreground: #1b1c1e;
+  --popover: #fbfbf9;
+  --popover-foreground: #1b1c1e;
+  --primary: oklch(0.62 0.075 200);
+  --primary-foreground: #fbfbf9;
+  --secondary: #e8e8e7;
+  --secondary-foreground: #1b1c1e;
+  --muted: #e8e8e7;
+  --muted-foreground: #87878a;
+  --accent: oklch(0.94 0.02 200);
+  --accent-foreground: #1b1c1e;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: #dcdcda;
+  --input: #dcdcda;
+  --ring: oklch(0.62 0.075 200);
+
+  /*
+   * Two tokens the shadcn set has no name for, mapped to utilities in the
+   * `@theme inline` block below. `--canvas` is the scene's own page, and is
+   * deliberately light in both themes because a scene is authored on paper.
+   * `--raised-shadow` is the drop shadow for floating panels, tuned per theme
+   * — a shadow calibrated for a light page all but vanishes on a dark one.
+   */
+  --canvas: #fbfbf9;
+  --raised-shadow: 0 1px 3px rgb(15 18 25 / 0.1);
 
   /* Editor syntax palette, consumed by src/scene/editorTheme.ts. */
   --cm-comment: #6e7781;
@@ -36,25 +55,29 @@
   --cm-punctuation: #57606a;
 }
 
+/* Dark, surface to ink: page #3b3d41 · muted #46484d · raised #4f5157. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: #3b3d41;
+  --foreground: #eeeff1;
+  --card: #4f5157;
+  --card-foreground: #eeeff1;
+  --popover: #4f5157;
+  --popover-foreground: #eeeff1;
+  --primary: oklch(0.7 0.075 200);
+  --primary-foreground: #1d1f22;
+  --secondary: #46484d;
+  --secondary-foreground: #eeeff1;
+  --muted: #46484d;
+  --muted-foreground: #a9abb0;
+  --accent: oklch(0.46 0.04 200);
+  --accent-foreground: #eeeff1;
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --border: #55575e;
+  --input: #55575e;
+  --ring: oklch(0.7 0.075 200);
+
+  /* `--canvas` is intentionally not overridden — the scene page stays light. */
+  --raised-shadow: 0 1px 8px rgb(8 10 14 / 0.32);
 
   --cm-comment: #8b949e;
   --cm-keyword: #ff7b72;
@@ -91,6 +114,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-canvas: var(--canvas);
+  --shadow-raised: var(--raised-shadow);
 }
 
 @layer base {

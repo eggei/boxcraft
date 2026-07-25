@@ -18,7 +18,7 @@ export function ScenePreview({
       <iframe
         title={title}
         srcDoc={source}
-        className="pointer-events-none h-full w-full rounded-lg border bg-white"
+        className="bg-canvas pointer-events-none h-full w-full rounded-lg border"
       />
     )
   }
@@ -26,7 +26,7 @@ export function ScenePreview({
   return (
     <div
       aria-label={`${title} (preview)`}
-      className="flex h-full w-full items-center justify-center rounded-lg border bg-white"
+      className="bg-canvas flex h-full w-full items-center justify-center rounded-lg border"
     >
       <div className="bg-muted h-[280px] w-[280px] rounded-md" />
     </div>
