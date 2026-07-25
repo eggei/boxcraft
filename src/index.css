@@ -33,14 +33,18 @@
   --ring: oklch(0.62 0.075 200);
 
   /*
-   * Two tokens the shadcn set has no name for, mapped to utilities in the
-   * `@theme inline` block below. `--canvas` is the scene's own page, and is
-   * deliberately light in both themes because a scene is authored on paper.
-   * `--raised-shadow` is the drop shadow for floating panels, tuned per theme
-   * — a shadow calibrated for a light page all but vanishes on a dark one.
+   * Three tokens the shadcn set has no name for; the first two are mapped to
+   * utilities in the `@theme inline` block below. `--canvas` is the scene's own
+   * page, and is deliberately light in both themes because a scene is authored
+   * on paper. `--raised-shadow` is the drop shadow for floating panels, tuned
+   * per theme — a shadow calibrated for a light page all but vanishes on a dark
+   * one. `--tip-opacity` fades the feed's neighbouring scenes back so they read
+   * as far away, and is likewise per-theme: a light canvas nearly disappears
+   * against a light page and glares against a dark one.
    */
   --canvas: #fbfbf9;
   --raised-shadow: 0 1px 3px rgb(15 18 25 / 0.1);
+  --tip-opacity: 0.5;
 
   /* Editor syntax palette, consumed by src/scene/editorTheme.ts. */
   --cm-comment: #6e7781;
@@ -78,6 +82,7 @@
 
   /* `--canvas` is intentionally not overridden — the scene page stays light. */
   --raised-shadow: 0 1px 8px rgb(8 10 14 / 0.32);
+  --tip-opacity: 0.28;
 
   --cm-comment: #8b949e;
   --cm-keyword: #ff7b72;
