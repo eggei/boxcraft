@@ -8,6 +8,8 @@ import {
   archivedScenes,
   archiveScene,
   unarchiveScene,
+  deleteScene,
+  restoreScene,
   reorderScenes,
   renameScene,
   DEFAULT_SOURCE,
@@ -138,6 +140,68 @@ describe('archiveScene / unarchiveScene', () => {
     scenes = archiveScene(scenes, 'seed-3', 200)
 
     expect(archivedScenes(scenes).map((s) => s.id)).toEqual(['seed-3', 'seed-1'])
+  })
+})
+
+describe('deleteScene / restoreScene', () => {
+  it('drops the scene entirely — not into the archive — and reflows the rest', () => {
+    const scenes = deleteScene(seedScenes(), 'seed-2')
+
+    expect(scenes.find((s) => s.id === 'seed-2')).toBeUndefined()
+    expect(archivedScenes(scenes)).toEqual([])
+    expect(activeScenes(scenes).map((s) => s.id)).toEqual(['seed-1', 'seed-3'])
+    expect(activeScenes(scenes).map((s) => s.order)).toEqual([0, 1])
+  })
+
+  it('deletes an archived scene without disturbing the active order', () => {
+    const archived = archiveScene(seedScenes(), 'seed-1', 100)
+    const scenes = deleteScene(archived, 'seed-1')
+
+    expect(scenes.find((s) => s.id === 'seed-1')).toBeUndefined()
+    expect(activeScenes(scenes).map((s) => s.order)).toEqual([0, 1])
+  })
+
+  it('leaves the list alone when the id is unknown', () => {
+    const base = seedScenes()
+    expect(deleteScene(base, 'nope')).toEqual(base)
+  })
+
+  it('restores a deleted scene at the position it held', () => {
+    const base = seedScenes()
+    const deleted = base.find((s) => s.id === 'seed-2')!
+    const restored = restoreScene(deleteScene(base, 'seed-2'), deleted)
+
+    expect(activeScenes(restored).map((s) => s.id)).toEqual([
+      'seed-1',
+      'seed-2',
+      'seed-3',
+    ])
+    expect(activeScenes(restored).map((s) => s.order)).toEqual([0, 1, 2])
+  })
+
+  it('restores at the end when the list shrank below its old position', () => {
+    const base = seedScenes()
+    const deleted = base.find((s) => s.id === 'seed-3')!
+    let scenes = deleteScene(base, 'seed-3')
+    scenes = deleteScene(scenes, 'seed-1')
+
+    const restored = restoreScene(scenes, deleted)
+    expect(activeScenes(restored).map((s) => s.id)).toEqual(['seed-2', 'seed-3'])
+    expect(activeScenes(restored).map((s) => s.order)).toEqual([0, 1])
+  })
+
+  it('restores an archived scene to the archive, not to the feed', () => {
+    const base = archiveScene(seedScenes(), 'seed-1', 100)
+    const deleted = base.find((s) => s.id === 'seed-1')!
+    const restored = restoreScene(deleteScene(base, 'seed-1'), deleted)
+
+    expect(archivedScenes(restored).map((s) => s.id)).toEqual(['seed-1'])
+    expect(activeScenes(restored).map((s) => s.id)).toEqual(['seed-2', 'seed-3'])
+  })
+
+  it('is a no-op when the scene is still in the list', () => {
+    const base = seedScenes()
+    expect(restoreScene(base, base[0])).toEqual(base)
   })
 })
 

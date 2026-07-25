@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   getAllScenes,
+  removeScene,
   replaceAllScenes,
   saveScene,
 } from '@/persistence/scenes'
@@ -8,9 +9,11 @@ import { importScenes, type ImportMode } from '@/library/libraryFile'
 import {
   addScene as addSceneOp,
   archiveScene as archiveOp,
+  deleteScene as deleteOp,
   duplicateScene as duplicateOp,
   renameScene as renameOp,
   reorderScenes as reorderOp,
+  restoreScene as restoreOp,
   seedScenes,
   unarchiveScene as unarchiveOp,
   type Scene,
@@ -84,6 +87,21 @@ export function useScenes() {
     setScenes((current) => unarchiveOp(current, id))
   }, [])
 
+  /**
+   * Permanent removal: the scene leaves the list and its record is dropped.
+   * Autosave only ever puts, so the delete has to be issued by hand — leaving it
+   * to autosave would keep the record alive until the next replace.
+   */
+  const deleteScene = useCallback((id: string) => {
+    setScenes((current) => deleteOp(current, id))
+    void removeScene(id)
+  }, [])
+
+  /** Undo a delete: the caller hands back the scene it was holding on to. */
+  const restoreScene = useCallback((scene: Scene) => {
+    setScenes((current) => restoreOp(current, scene))
+  }, [])
+
   const renameScene = useCallback((id: string, title: string) => {
     setScenes((current) => renameOp(current, id, title))
   }, [])
@@ -120,6 +138,8 @@ export function useScenes() {
     duplicateScene,
     archiveScene,
     unarchiveScene,
+    deleteScene,
+    restoreScene,
     renameScene,
     reorderScenes,
     updateSource,
