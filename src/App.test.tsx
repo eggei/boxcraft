@@ -1,20 +1,34 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { getAllScenes, getScene } from './persistence/scenes'
 import { LIBRARY_FORMAT, LIBRARY_VERSION } from './library/libraryFile'
 
+/**
+ * The app reads its location from the router, so tests mount it behind an
+ * in-memory one. Each render starts from a fresh history — no location leaking
+ * from the test before it — and `at` deep-links a specific page.
+ */
+function renderApp(at = '/') {
+  return render(
+    <MemoryRouter initialEntries={[at]}>
+      <App />
+    </MemoryRouter>,
+  )
+}
+
 describe('App', () => {
   it('renders the BoxCraft heading', async () => {
-    render(<App />)
+    renderApp()
     expect(
       await screen.findByRole('heading', { name: 'BoxCraft' }),
     ).toBeInTheDocument()
   })
 
   it('seeds example scenes on first run with an empty database', async () => {
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
     const seeded = await getAllScenes()
     expect(seeded.length).toBeGreaterThanOrEqual(3)
@@ -22,7 +36,7 @@ describe('App', () => {
 
   it('autosaves a title edit so it persists across a reload', async () => {
     const user = userEvent.setup()
-    const { unmount } = render(<App />)
+    const { unmount } = renderApp()
 
     const [firstTitle] = await screen.findAllByRole('textbox')
     await user.clear(firstTitle)
@@ -34,13 +48,13 @@ describe('App', () => {
 
     // Simulate a reload: throw away the React tree, remount from persistence.
     unmount()
-    render(<App />)
+    renderApp()
     expect(await screen.findByDisplayValue('Neon ring')).toBeInTheDocument()
   })
 
   it('opens the editor directly when a new scene is created', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.click(screen.getByRole('button', { name: 'New' }))
@@ -48,14 +62,12 @@ describe('App', () => {
     // The editing level: no feed cards, and the header edits the new scene.
     expect(screen.queryAllByTestId('scene-card')).toHaveLength(0)
     expect(screen.getByLabelText('Scene title')).toHaveValue('Untitled')
-    expect(
-      screen.getByRole('button', { name: 'Exit (Esc)' }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Exit (Esc)' })).toBeInTheDocument()
   })
 
   it('enters the editor when a feed card is clicked', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.click(screen.getByRole('button', { name: 'Edit Gradient card' }))
@@ -66,7 +78,7 @@ describe('App', () => {
 
   it('toggles dark mode on the document root', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
     const root = document.documentElement
 
@@ -88,9 +100,85 @@ describe('App', () => {
 
   it('restores a stored dark preference on load', async () => {
     localStorage.setItem('boxcraft:theme', 'dark')
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
     expect(document.documentElement).toHaveClass('dark')
+  })
+})
+
+describe('routes', () => {
+  it('lands on the feed from the root', async () => {
+    renderApp('/')
+    expect(await screen.findAllByTestId('scene-card')).not.toHaveLength(0)
+  })
+
+  it('opens the files grid at /files', async () => {
+    renderApp('/files')
+    expect(await screen.findAllByTestId('files-tile')).toHaveLength(3)
+    expect(screen.queryAllByTestId('scene-card')).toHaveLength(0)
+  })
+
+  it('opens the archive at /archived', async () => {
+    renderApp('/archived')
+    expect(await screen.findByText('No archived scenes.')).toBeInTheDocument()
+  })
+
+  it('deep-links straight into the editor for one scene', async () => {
+    renderApp('/edit/seed-2')
+    expect(await screen.findByLabelText('Scene title')).toHaveValue(
+      'Gradient card',
+    )
+  })
+
+  it('falls back to the feed when the URL names a scene that is gone', async () => {
+    renderApp('/edit/does-not-exist')
+    expect(await screen.findAllByTestId('scene-card')).not.toHaveLength(0)
+    expect(screen.queryByLabelText('Scene title')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the feed on an unknown path', async () => {
+    renderApp('/nonsense')
+    expect(await screen.findAllByTestId('scene-card')).not.toHaveLength(0)
+  })
+
+  it('scrolls the feed to the scene named in the URL', async () => {
+    // jsdom does no layout, so every element measures 0 and scrollTop never
+    // moves. Give the scroller a viewport height and record what it is set to.
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    const scrollTops: number[] = []
+    vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(
+      (value) => scrollTops.push(value),
+    )
+
+    renderApp('/feed/seed-3')
+    await screen.findAllByTestId('scene-card')
+
+    // Every card is one viewport tall, so the third one is two viewports down.
+    expect(scrollTops).toContain(1600)
+    vi.restoreAllMocks()
+  })
+
+  it('navigates from the feed to the files grid and back', async () => {
+    const user = userEvent.setup()
+    renderApp()
+    await screen.findAllByTestId('scene-card')
+
+    await user.click(screen.getByRole('link', { name: 'Files' }))
+    expect(await screen.findAllByTestId('files-tile')).toHaveLength(3)
+
+    await user.click(screen.getByRole('link', { name: 'Feed' }))
+    expect(await screen.findAllByTestId('scene-card')).not.toHaveLength(0)
+  })
+
+  it('leaves the editor on Escape', async () => {
+    const user = userEvent.setup()
+    renderApp('/edit/seed-1')
+    await screen.findByLabelText('Scene title')
+
+    await user.keyboard('{Escape}')
+
+    expect(await screen.findAllByTestId('scene-card')).not.toHaveLength(0)
+    expect(screen.queryByLabelText('Scene title')).not.toBeInTheDocument()
   })
 })
 
@@ -143,7 +231,7 @@ describe('library backup and restore', () => {
   it('exports the scenes that are actually in the library', async () => {
     const exported = captureExport()
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.click(screen.getByRole('button', { name: 'Export library' }))
@@ -159,7 +247,7 @@ describe('library backup and restore', () => {
 
   it('adds imported scenes alongside the existing ones', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.upload(
@@ -183,7 +271,7 @@ describe('library backup and restore', () => {
 
   it('replacing drops the old scenes from storage, not just from the screen', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
     expect(await getScene('seed-1')).toBeDefined()
 
@@ -208,7 +296,7 @@ describe('library backup and restore', () => {
 
   it('survives a reload after a replace', async () => {
     const user = userEvent.setup()
-    const { unmount } = render(<App />)
+    const { unmount } = renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.upload(
@@ -223,7 +311,7 @@ describe('library backup and restore', () => {
     )
 
     unmount()
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByDisplayValue('Only one')).toBeInTheDocument()
     expect(screen.getAllByTestId('scene-card')).toHaveLength(1)
@@ -232,7 +320,7 @@ describe('library backup and restore', () => {
   it('round-trips an export back into an empty library', async () => {
     const exported = captureExport()
     const user = userEvent.setup()
-    const { unmount } = render(<App />)
+    const { unmount } = renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.click(screen.getByRole('button', { name: 'Export library' }))
@@ -265,13 +353,13 @@ describe('library backup and restore', () => {
     })
 
     unmount()
-    render(<App />)
+    renderApp()
     expect(await screen.findByDisplayValue('Glow button')).toBeInTheDocument()
   })
 
   it('does not create a scene when N is pressed with the import dialog open', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.upload(
@@ -290,7 +378,7 @@ describe('library backup and restore', () => {
 
   it('closes the import dialog on Escape', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderApp()
     await screen.findAllByTestId('scene-card')
 
     await user.upload(

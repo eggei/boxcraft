@@ -15,12 +15,18 @@ export interface Scene {
   archivedAt: number | null
 }
 
+/**
+ * Every scene draws on a square canvas of this many px. Previews and thumbnails
+ * scale from it, so it is the one number that defines a scene's aspect.
+ */
+export const CANVAS_SIZE = 400
+
 export const DEFAULT_SOURCE = `<!doctype html>
 <html>
   <head>
     <style>
       body { margin: 0; display: grid; place-items: center; min-height: 100vh; }
-      .canvas { position: relative; width: 400px; height: 400px; background: #fff; }
+      .canvas { position: relative; width: ${CANVAS_SIZE}px; height: ${CANVAS_SIZE}px; background: #fff; }
     </style>
   </head>
   <body>
@@ -50,7 +56,7 @@ function exampleSource(css: string, body: string): string {
   <head>
     <style>
       body { margin: 0; display: grid; place-items: center; min-height: 100vh; background: #f6f6f6; }
-      .canvas { position: relative; width: 400px; height: 400px; background: #fff; }
+      .canvas { position: relative; width: ${CANVAS_SIZE}px; height: ${CANVAS_SIZE}px; background: #fff; }
 ${css}
     </style>
   </head>

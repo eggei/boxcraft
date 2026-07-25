@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Copy, Archive, Trash2 } from 'lucide-react'
-import { activeScenes, type Scene } from './sceneList'
+import { activeScenes, CANVAS_SIZE, type Scene } from './sceneList'
 import { ScenePreview } from './ScenePreview'
 
 /** How many neighbors on each side of the current scene stay live. */
@@ -9,27 +9,31 @@ const WINDOW = 1
 
 export function SceneFeed({
   scenes,
-  focusIndex,
+  focusSceneId,
   onRename,
   onDuplicate,
   onArchive,
   onDelete,
-  onCurrentIndexChange,
+  onCurrentSceneChange,
   onOpen,
 }: {
   scenes: Scene[]
-  /** When set, the feed scrolls this card into view on mount. */
-  focusIndex?: number
+  /** When set, the feed scrolls this scene's card into view on mount. */
+  focusSceneId?: string
   onRename: (id: string, title: string) => void
   onDuplicate: (id: string) => void
   onArchive: (id: string) => void
   onDelete: (id: string) => void
-  onCurrentIndexChange?: (index: number) => void
+  onCurrentSceneChange?: (sceneId: string) => void
   /** Clicking a card's render opens that scene for editing. */
-  onOpen?: (index: number) => void
+  onOpen?: (sceneId: string) => void
 }) {
   const active = activeScenes(scenes)
-  const [currentIndex, setCurrentIndex] = useState(focusIndex ?? 0)
+  const focusIndex = Math.max(
+    0,
+    active.findIndex((scene) => scene.id === focusSceneId),
+  )
+  const [currentIndex, setCurrentIndex] = useState(focusIndex)
   const cardRefs = useRef<Array<HTMLElement | null>>([])
   const scrollerRef = useRef<HTMLDivElement>(null)
 
@@ -37,18 +41,19 @@ export function SceneFeed({
   // card is exactly one viewport tall, so scroll by index — robust against any
   // transform on an ancestor (the level-change animation) skewing geometry.
   useEffect(function scrollToFocus() {
-    if (focusIndex == null) return
     const scroller = scrollerRef.current
     if (scroller) scroller.scrollTop = focusIndex * scroller.clientHeight
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Report the centered card so the owner can Start Editing on the right scene.
+  // Report the centered card so the owner can put it in the URL and Start
+  // Editing on the right scene.
+  const currentScene = active[Math.min(currentIndex, active.length - 1)]
   useEffect(
     function reportCurrent() {
-      onCurrentIndexChange?.(currentIndex)
+      if (currentScene) onCurrentSceneChange?.(currentScene.id)
     },
-    [currentIndex, onCurrentIndexChange],
+    [currentScene, onCurrentSceneChange],
   )
 
   // Track which card is centered so we can window the live iframes around it.
@@ -100,7 +105,11 @@ export function SceneFeed({
           }}
           className="flex h-full snap-start flex-col items-center justify-center gap-3 p-6"
         >
-          <div className="flex w-full max-w-[520px] items-center gap-2">
+          {/* The row tracks the artwork's width so both read as one card. */}
+          <div
+            className="flex w-full items-center gap-2"
+            style={{ maxWidth: CANVAS_SIZE }}
+          >
             <input
               aria-label={`Title of ${scene.title}`}
               className="border-input focus-visible:ring-ring flex-1 rounded-md border bg-transparent px-2 py-1 text-sm outline-none focus-visible:ring-[3px]"
@@ -117,12 +126,15 @@ export function SceneFeed({
               <Trash2 className="size-4" />
             </IconButton>
           </div>
+          {/* A scene is its 400×400 canvas: fixed size, centered in the
+              viewport, rather than stretched to whatever height is going. */}
           <motion.button
             type="button"
             layoutId={`scene-${scene.id}`}
             aria-label={`Edit ${scene.title}`}
-            onClick={() => onOpen?.(index)}
-            className="focus-visible:ring-ring aspect-square w-full max-w-[520px] flex-1 cursor-pointer rounded-lg outline-none focus-visible:ring-2"
+            onClick={() => onOpen?.(scene.id)}
+            style={{ width: CANVAS_SIZE, height: CANVAS_SIZE }}
+            className="focus-visible:ring-ring max-w-full shrink-0 cursor-pointer rounded-lg outline-none focus-visible:ring-2"
           >
             <ScenePreview
               source={scene.source}
