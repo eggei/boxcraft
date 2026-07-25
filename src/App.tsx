@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useMatch,
+  useNavigate,
+} from 'react-router-dom'
 import { LayoutGroup, motion } from 'framer-motion'
 import { Moon, Plus, Sun } from 'lucide-react'
 import { useScenes } from '@/scenes/useScenes'
@@ -7,11 +16,19 @@ import { FilesView } from '@/scenes/FilesView'
 import { ArchivedView } from '@/scenes/ArchivedView'
 import { SceneEditorPane } from '@/scene/SceneEditorPane'
 import { activeScenes, type Scene } from '@/scenes/sceneList'
-import { type Level } from '@/scenes/navigation'
+import { editPath, feedPath, pageForPath, ROUTES } from '@/scenes/navigation'
 import { useTheme } from '@/theme/useTheme'
 import { LibraryControls } from '@/library/LibraryControls'
 import { type ImportMode } from '@/library/libraryFile'
 
+/** Served from public/ — same file the favicon points at. */
+const LOGO_SRC = '/logo.png'
+
+/**
+ * The shell: header chrome plus the routed pages. Where the app is — files,
+ * feed, a scene in the editor, the archive — lives in the URL rather than in
+ * component state, so every page is linkable, reloadable and back-button aware.
+ */
 function App() {
   const {
     scenes,
@@ -28,32 +45,28 @@ function App() {
 
   const { theme, toggle: toggleTheme } = useTheme()
 
-  const [level, setLevel] = useState<Level>('feed')
-  const [index, setIndex] = useState(0)
-  const [showArchived, setShowArchived] = useState(false)
-  const [undoId, setUndoId] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const page = pageForPath(pathname)
+  const feedMatch = useMatch(ROUTES.feedScene)
+  const editMatch = useMatch(ROUTES.editScene)
 
   const active = activeScenes(scenes)
-  const focusedIndex = Math.min(index, Math.max(0, active.length - 1))
-  const focused = active[focusedIndex]
+  /** The scene the editor is on, if the URL names one that still exists. */
+  const editing = active.find((scene) => scene.id === editMatch?.params.sceneId)
+  /** The feed's centered scene: from the URL, else the first card. */
+  const feedSceneId = feedMatch?.params.sceneId ?? active[0]?.id
+  const [undoId, setUndoId] = useUndoToast()
 
   const startEditing = useCallback(() => {
-    if (active.length > 0) setLevel('edit')
-  }, [active.length])
+    if (feedSceneId) navigate(editPath(feedSceneId))
+  }, [feedSceneId, navigate])
 
-  /** Open a scene by its position among the active ones, straight into editing. */
-  const openForEditing = useCallback((i: number) => {
-    setIndex(i)
-    setLevel('edit')
-  }, [])
-
-  // A new scene is appended last, so its index is the pre-add active count. It
-  // lands in the editor directly — a blank card in the feed has nothing to show.
+  // A new scene lands in the editor directly — a blank card in the feed has
+  // nothing to show.
   const handleNewScene = useCallback(() => {
-    addScene()
-    setShowArchived(false)
-    openForEditing(active.length)
-  }, [addScene, active.length, openForEditing])
+    navigate(editPath(addScene()))
+  }, [addScene, navigate])
 
   // Soft-delete = archive + an undo toast (no confirm dialog).
   const handleDelete = useCallback(
@@ -61,34 +74,44 @@ function App() {
       archiveScene(id)
       setUndoId(id)
     },
-    [archiveScene],
+    [archiveScene, setUndoId],
   )
 
-  // An import can move or drop whatever was focused, so land on the feed's first
-  // scene rather than trying to keep a position that may no longer exist.
+  // An import can move or drop whatever was focused, so land on the feed's
+  // first scene rather than trying to keep a position that may no longer exist.
   const handleImport = useCallback(
     async (incoming: Scene[], mode: ImportMode) => {
       await importLibrary(incoming, mode)
       setUndoId(null)
-      setShowArchived(false)
-      setIndex(0)
-      setLevel('feed')
+      navigate(feedPath())
     },
-    [importLibrary],
+    [importLibrary, navigate, setUndoId],
   )
 
   const handleUndo = useCallback(() => {
     if (undoId) unarchiveScene(undoId)
     setUndoId(null)
-  }, [undoId, unarchiveScene])
+  }, [undoId, setUndoId, unarchiveScene])
 
-  useEffect(
-    function dismissToast() {
-      if (!undoId) return
-      const timer = setTimeout(() => setUndoId(null), 6000)
-      return () => clearTimeout(timer)
+  // Scrolling the feed rewrites the URL in place: a reload or a shared link
+  // comes back to the same card, without an entry per card in the history.
+  const handleCurrentScene = useCallback(
+    (sceneId: string) => {
+      if (sceneId !== feedMatch?.params.sceneId) {
+        navigate(feedPath(sceneId), { replace: true })
+      }
     },
-    [undoId],
+    [feedMatch?.params.sceneId, navigate],
+  )
+
+  const openForEditing = useCallback(
+    (sceneId: string) => navigate(editPath(sceneId)),
+    [navigate],
+  )
+
+  const openFromFiles = useCallback(
+    (sceneId: string) => navigate(feedPath(sceneId)),
+    [navigate],
   )
 
   // Keyboard: N = new scene, ⌘/Ctrl+Enter = Start Editing, Esc = exit editing.
@@ -106,8 +129,8 @@ function App() {
           startEditing()
           return
         }
-        if (event.key === 'Escape' && level === 'edit') {
-          setLevel('feed')
+        if (event.key === 'Escape' && page === 'edit') {
+          navigate(feedPath(editing?.id))
           return
         }
         if (event.metaKey || event.ctrlKey || event.altKey || inField) return
@@ -119,24 +142,33 @@ function App() {
       window.addEventListener('keydown', onKeyDown)
       return () => window.removeEventListener('keydown', onKeyDown)
     },
-    [handleNewScene, startEditing, level],
+    [handleNewScene, startEditing, navigate, page, editing?.id],
   )
 
-  function openFromFiles(i: number) {
-    setIndex(i)
-    setLevel('feed')
-  }
+  const feed = (
+    <SceneFeed
+      scenes={scenes}
+      focusSceneId={feedSceneId}
+      onRename={renameScene}
+      onDuplicate={duplicateScene}
+      onArchive={archiveScene}
+      onDelete={handleDelete}
+      onCurrentSceneChange={handleCurrentScene}
+      onOpen={openForEditing}
+    />
+  )
 
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-2 border-b px-4 py-2">
+        <img src={LOGO_SRC} alt="" className="size-7" />
         <h1 className="text-lg font-semibold tracking-tight">BoxCraft</h1>
-        {level === 'edit' && focused && (
+        {editing && (
           <input
             aria-label="Scene title"
             className="border-input focus-visible:ring-ring ml-2 rounded-md border bg-transparent px-2 py-1 text-sm outline-none focus-visible:ring-[3px]"
-            value={focused.title}
-            onChange={(event) => renameScene(focused.id, event.target.value)}
+            value={editing.title}
+            onChange={(event) => renameScene(editing.id, event.target.value)}
           />
         )}
         <div className="flex-1" />
@@ -159,33 +191,31 @@ function App() {
           )}
         </button>
 
-        {level !== 'edit' && (
+        {page !== 'edit' && (
           <LibraryControls scenes={scenes} onImport={handleImport} />
         )}
 
-        {!showArchived && level !== 'files' && (
-          <HeaderButton onClick={() => setLevel('files')}>Files</HeaderButton>
+        {page === 'feed' && <HeaderLink to={ROUTES.files}>Files</HeaderLink>}
+        {page === 'files' && (
+          <HeaderLink to={feedPath(feedSceneId)}>Feed</HeaderLink>
         )}
-        {!showArchived && level === 'files' && (
-          <HeaderButton onClick={() => setLevel('feed')}>Feed</HeaderButton>
-        )}
-        {!showArchived && level === 'feed' && (
-          <HeaderButton onClick={startEditing}>
+        {page === 'feed' && feedSceneId && (
+          <HeaderLink to={editPath(feedSceneId)}>
             Start Editing (⌘+Enter)
-          </HeaderButton>
+          </HeaderLink>
         )}
-        {!showArchived && level === 'edit' && (
-          <HeaderButton onClick={() => setLevel('feed')}>
-            Exit (Esc)
-          </HeaderButton>
+        {page === 'edit' && (
+          <HeaderLink to={feedPath(editing?.id)}>Exit (Esc)</HeaderLink>
         )}
 
-        {level !== 'edit' && (
-          <HeaderButton onClick={() => setShowArchived((v) => !v)}>
-            {showArchived ? 'Back to feed' : 'Archived'}
-          </HeaderButton>
+        {page === 'archived' ? (
+          <HeaderLink to={feedPath()}>Back to feed</HeaderLink>
+        ) : (
+          page !== 'edit' && (
+            <HeaderLink to={ROUTES.archived}>Archived</HeaderLink>
+          )
         )}
-        {!showArchived && level !== 'edit' && (
+        {page !== 'edit' && page !== 'archived' && (
           <button
             type="button"
             onClick={handleNewScene}
@@ -200,43 +230,52 @@ function App() {
       <main className="min-h-0 flex-1">
         {status === 'loading' ? (
           <p className="text-muted-foreground p-8 text-sm">Loading…</p>
-        ) : showArchived ? (
-          <ArchivedView scenes={scenes} onUnarchive={unarchiveScene} />
         ) : (
           <LayoutGroup>
             <motion.div
-              key={level}
+              key={page}
               className="h-full"
-              initial={{ opacity: 0, scale: level === 'files' ? 1.04 : 0.97 }}
+              initial={{ opacity: 0, scale: page === 'files' ? 1.04 : 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.25, ease: 'easeInOut' }}
             >
-              {level === 'files' && (
-                <FilesView
-                  scenes={scenes}
-                  onOpen={openFromFiles}
-                  onReorder={reorderScenes}
+              <Routes>
+                <Route path="/" element={<Navigate to={feedPath()} replace />} />
+                <Route
+                  path={ROUTES.files}
+                  element={
+                    <FilesView
+                      scenes={scenes}
+                      onOpen={openFromFiles}
+                      onReorder={reorderScenes}
+                    />
+                  }
                 />
-              )}
-              {level === 'feed' && (
-                <SceneFeed
-                  scenes={scenes}
-                  focusIndex={focusedIndex}
-                  onRename={renameScene}
-                  onDuplicate={duplicateScene}
-                  onArchive={archiveScene}
-                  onDelete={handleDelete}
-                  onCurrentIndexChange={setIndex}
-                  onOpen={openForEditing}
+                <Route path={ROUTES.feed} element={feed} />
+                <Route path={ROUTES.feedScene} element={feed} />
+                <Route
+                  path={ROUTES.editScene}
+                  element={
+                    editing ? (
+                      <SceneEditorPane
+                        key={editing.id}
+                        source={editing.source}
+                        onChange={(source) => updateSource(editing.id, source)}
+                      />
+                    ) : (
+                      // The URL names a scene that was archived or never existed.
+                      <Navigate to={feedPath()} replace />
+                    )
+                  }
                 />
-              )}
-              {level === 'edit' && focused && (
-                <SceneEditorPane
-                  key={focused.id}
-                  source={focused.source}
-                  onChange={(source) => updateSource(focused.id, source)}
+                <Route
+                  path={ROUTES.archived}
+                  element={
+                    <ArchivedView scenes={scenes} onUnarchive={unarchiveScene} />
+                  }
                 />
-              )}
+                <Route path="*" element={<Navigate to={feedPath()} replace />} />
+              </Routes>
             </motion.div>
           </LayoutGroup>
         )}
@@ -261,21 +300,30 @@ function App() {
   )
 }
 
-function HeaderButton({
-  onClick,
-  children,
-}: {
-  onClick: () => void
-  children: React.ReactNode
-}) {
+/** The id awaiting an undo, cleared automatically after a few seconds. */
+function useUndoToast() {
+  const [undoId, setUndoId] = useState<string | null>(null)
+
+  useEffect(
+    function dismissToast() {
+      if (!undoId) return
+      const timer = setTimeout(() => setUndoId(null), 6000)
+      return () => clearTimeout(timer)
+    },
+    [undoId],
+  )
+
+  return [undoId, setUndoId] as const
+}
+
+function HeaderLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Link
+      to={to}
       className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
     >
       {children}
-    </button>
+    </Link>
   )
 }
 

@@ -7,6 +7,7 @@ writing boilerplate. Local-first, no accounts, no backend.
 ## Stack
 
 - **React 19 + TypeScript + Vite 8** — plain static SPA (deploys to Vercel, no Next.js)
+- **React Router 7** — every page has a URL, so links, reloads and Back all work
 - **Tailwind CSS v4 + shadcn/ui** for the app chrome
 - **Vitest + React Testing Library + jsdom** for tests
 - **IndexedDB** (hand-rolled promise wrapper, no Dexie) for scene persistence
@@ -20,6 +21,19 @@ npm test         # run the test suite once
 npm run build    # type-check + build the static bundle to dist/
 npm run preview  # preview the production build
 ```
+
+## Routes
+
+| Path            | Page                                                     |
+| --------------- | -------------------------------------------------------- |
+| `/feed`         | L2 — the scrolling feed of scenes                        |
+| `/feed/:id`     | the feed, scrolled to one scene (the URL tracks scrolling)|
+| `/files`        | L1 — the files grid                                      |
+| `/edit/:id`     | L3 — one scene in the editor                             |
+| `/archived`     | the archive                                              |
+
+`/` redirects to the feed, and so does any URL naming a scene that no longer
+exists. Paths are built in one place — `src/scenes/navigation.ts`.
 
 ## Backup & restore
 

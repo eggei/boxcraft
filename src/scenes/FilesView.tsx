@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { activeScenes, type Scene } from './sceneList'
+import { SceneThumbnail } from './SceneThumbnail'
+
+/** Side of a grid tile's snapshot, in px. */
+const TILE_SIZE = 240
 
 /**
  * L1 — the files grid: a static snapshot per active scene. Drag a tile onto
@@ -14,7 +18,7 @@ export function FilesView({
   onReorder,
 }: {
   scenes: Scene[]
-  onOpen: (index: number) => void
+  onOpen: (sceneId: string) => void
   onReorder: (orderedIds: string[]) => void
 }) {
   const active = activeScenes(scenes)
@@ -33,7 +37,7 @@ export function FilesView({
 
   return (
     <div className="grid h-full grid-cols-[repeat(auto-fill,240px)] content-start justify-center gap-6 overflow-y-auto p-6">
-      {active.map((scene, index) => (
+      {active.map((scene) => (
         <motion.button
           key={scene.id}
           type="button"
@@ -43,21 +47,14 @@ export function FilesView({
           onDragStart={() => setDragId(scene.id)}
           onDragOver={(event) => event.preventDefault()}
           onDrop={() => handleDrop(scene.id)}
-          onClick={() => onOpen(index)}
+          onClick={() => onOpen(scene.id)}
           className="hover:ring-ring flex w-[240px] flex-col gap-2 rounded-lg text-left hover:ring-2"
         >
-          <div className="bg-canvas relative h-[240px] w-[240px] overflow-hidden rounded-lg border">
-            {/* A big iframe scaled down so the whole 400×400-in-100vh scene fits. */}
-            <iframe
-              title={`${scene.title} snapshot`}
-              srcDoc={scene.source}
-              tabIndex={-1}
-              width={960}
-              height={960}
-              style={{ transform: 'scale(0.25)', transformOrigin: 'top left' }}
-              className="pointer-events-none absolute left-0 top-0 border-0"
-            />
-          </div>
+          <SceneThumbnail
+            source={scene.source}
+            title={scene.title}
+            size={TILE_SIZE}
+          />
           <span className="truncate px-1 text-sm">{scene.title}</span>
         </motion.button>
       ))}
