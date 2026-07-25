@@ -1,15 +1,19 @@
 import { useRef, useState } from 'react'
 import { WithTooltip } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { useEditorSettings } from '@/settings/useEditorSettings'
+import { EditorSettingsMenu } from './EditorSettingsMenu'
 import { SceneEditor, type SceneEditorHandle } from './SceneEditor'
 import { SceneStage } from './SceneStage'
 import { Toolbar, type Tool } from './Toolbar'
 import { listBoxes, type BoxPlacement } from './document'
 
 /**
- * The L3 editing surface for a single scene: CodeMirror source (left) + the
- * instrumented iframe render with the tool overlay (right), plus a selection
- * panel. Tool/selection state is local to the focused scene. Source changes
- * are lifted out via `onChange` so the owner persists them.
+ * The L3 editing surface for a single scene: the CodeMirror source on one side
+ * and the instrumented iframe render with the tool overlay on the other, plus a
+ * selection panel and the settings gear. Tool and selection state is local to
+ * the focused scene; the editor settings outlive it. Source changes are lifted
+ * out via `onChange` so the owner persists them.
  */
 export function SceneEditorPane({
   source,
@@ -21,6 +25,8 @@ export function SceneEditorPane({
   const [tool, setTool] = useState<Tool>('select')
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null)
   const editorRef = useRef<SceneEditorHandle>(null)
+  const { settings, toggleAutoFormat, toggleEditorSide } = useEditorSettings()
+  const codeOnRight = settings.editorSide === 'right'
 
   function handleCreateBox(placement: BoxPlacement) {
     editorRef.current?.createBox(placement)
@@ -60,15 +66,28 @@ export function SceneEditorPane({
 
   return (
     <div className="grid h-full min-h-0 grid-cols-2">
-      <div className="min-h-0 overflow-hidden border-r">
+      {/* Which half each pane takes is CSS `order`, not JSX order: swapping the
+          children would remount CodeMirror and take the undo history with it. */}
+      <div
+        className={cn(
+          'relative min-h-0 overflow-hidden',
+          codeOnRight ? 'order-2 border-l' : 'order-1 border-r',
+        )}
+      >
         <SceneEditor
           ref={editorRef}
           value={source}
           onChange={onChange}
           onCursorBox={setSelectedHandle}
+          autoFormat={settings.autoFormat}
+        />
+        <EditorSettingsMenu
+          settings={settings}
+          onToggleAutoFormat={toggleAutoFormat}
+          onToggleEditorSide={toggleEditorSide}
         />
       </div>
-      <div className="relative min-h-0">
+      <div className={cn('relative min-h-0', codeOnRight ? 'order-1' : 'order-2')}>
         <Toolbar tool={tool} onToolChange={setTool} />
         <SceneStage
           source={source}

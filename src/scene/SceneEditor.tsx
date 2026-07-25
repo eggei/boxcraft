@@ -6,6 +6,7 @@ import type { Extension } from '@codemirror/state'
 import { html } from '@codemirror/lang-html'
 import { basicSetup } from 'codemirror'
 import { editorTheme } from './editorTheme'
+import { indentAllChanges, indentConfig } from './format'
 import {
   attachJs,
   boxAtOffset,
@@ -38,6 +39,8 @@ interface SceneEditorProps {
   onChange: (source: string) => void
   /** Fires with the box whose rule the cursor is in (null when outside any). */
   onCursorBox?: (handle: string | null) => void
+  /** Re-indent the whole document whenever the editor loses focus. */
+  autoFormat?: boolean
 }
 
 /** Chip / error decorations over managed identity tokens, computed from source. */
@@ -100,19 +103,36 @@ const selectedRuleField = StateField.define<DecorationSet>({
 })
 
 /**
+ * Re-indent the document in one transaction. Whitespace-only, so the cursor and
+ * every decoration map straight through and a single undo restores the old
+ * shape. A no-op when the source is already formatted — dispatching an empty
+ * change would still push an undo step.
+ */
+function formatDocument(view: EditorView) {
+  const changes = indentAllChanges(view.state)
+  if (changes.empty) return
+  // The update listener below lifts the new source out via `onChange`.
+  view.dispatch({ changes })
+}
+
+/**
  * CodeMirror 6 adapter over the scene source. The domain module owns what the
  * source becomes, where the cursor lands, and which tokens are managed; this
  * component only translates that into transactions, decorations, and sync
  * callbacks. It holds no parallel model.
  */
 export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
-  function SceneEditor({ value, onChange, onCursorBox }, ref) {
+  function SceneEditor({ value, onChange, onCursorBox, autoFormat = true }, ref) {
     const hostRef = useRef<HTMLDivElement>(null)
     const viewRef = useRef<EditorView | null>(null)
     const onChangeRef = useRef(onChange)
     const onCursorBoxRef = useRef(onCursorBox)
+    // Read at blur time rather than baked into the mounted extensions, so
+    // flipping the setting never costs the editor its state or history.
+    const autoFormatRef = useRef(autoFormat)
     onChangeRef.current = onChange
     onCursorBoxRef.current = onCursorBox
+    autoFormatRef.current = autoFormat
 
     useEffect(function mount() {
       const syncSelection = EditorView.updateListener.of(function report(update) {
@@ -125,14 +145,26 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
         }
       })
 
+      // Formatting on blur is this app's "format on save": there is no save,
+      // and reformatting mid-keystroke would fight the person typing. Leaving
+      // the editor — for the stage, the toolbar, anywhere — is the moment the
+      // document is between thoughts and safe to tidy.
+      const formatOnBlur = EditorView.domEventHandlers({
+        blur(_event, view) {
+          if (autoFormatRef.current) formatDocument(view)
+        },
+      })
+
       const extensions: Extension[] = [
         basicSetup,
         editorTheme,
         html(),
+        indentConfig,
         EditorView.lineWrapping,
         chipPlugin,
         selectedRuleField,
         syncSelection,
+        formatOnBlur,
       ]
 
       const view = new EditorView({
@@ -160,6 +192,17 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
         })
       }
     }, [value])
+
+    // Turning the setting on (and opening an editor with it already on) tidies
+    // the document there and then: the promise is "kept formatted", and a
+    // checkbox that visibly does nothing until the next blur reads as broken.
+    useEffect(
+      function formatWhenEnabled() {
+        const view = viewRef.current
+        if (view && autoFormat) formatDocument(view)
+      },
+      [autoFormat],
+    )
 
     useImperativeHandle(ref, function handle() {
       return {
