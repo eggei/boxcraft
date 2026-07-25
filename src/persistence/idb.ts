@@ -25,16 +25,42 @@ function openDB(): Promise<IDBDatabase> {
   })
 }
 
+function txDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
+  })
+}
+
 export async function putRecord<T>(store: string, value: T): Promise<void> {
   const db = await openDB()
   try {
     const tx = db.transaction(store, 'readwrite')
-    const done = new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-      tx.onabort = () => reject(tx.error)
-    })
+    const done = txDone(tx)
     tx.objectStore(store).put(value)
+    await done
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Swap the store's whole contents in one transaction. Autosave only ever puts,
+ * so this is the only path that removes records — an import that replaces the
+ * library must not leave the old ones behind.
+ */
+export async function replaceAllRecords<T>(
+  store: string,
+  values: T[],
+): Promise<void> {
+  const db = await openDB()
+  try {
+    const tx = db.transaction(store, 'readwrite')
+    const done = txDone(tx)
+    const objectStore = tx.objectStore(store)
+    objectStore.clear()
+    for (const value of values) objectStore.put(value)
     await done
   } finally {
     db.close()
