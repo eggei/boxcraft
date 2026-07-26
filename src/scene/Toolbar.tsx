@@ -41,9 +41,10 @@ const TOOLS: {
 ]
 
 /**
- * Left-edge vertical floating toolbar (Excalidraw fashion). Controlled: it owns
- * no tool state, just renders the active tool and reports changes. `V`/`B`
- * switch tools unless the user is typing into a field.
+ * The vertical floating tool palette (Excalidraw fashion). Controlled: it owns
+ * no tool state, just renders the active tool and reports changes. `V`/`B`/`J`
+ * switch tools unless the user is typing into a field. Where it sits is the
+ * pane's business — it renders a panel, not a position.
  */
 export function Toolbar({ tool, onToolChange }: ToolbarProps) {
   useEffect(
@@ -72,11 +73,11 @@ export function Toolbar({ tool, onToolChange }: ToolbarProps) {
   )
 
   return (
-    <div className="bg-popover shadow-raised absolute top-1/2 left-3 z-10 flex -translate-y-1/2 flex-col gap-1 rounded-lg border p-1">
+    <div className="bg-popover shadow-raised flex flex-col gap-1 rounded-lg border p-1">
       {TOOLS.map(({ id, label, key, tip, Icon }) => (
-        // Side "right": the toolbar hugs the left edge, so a tip anywhere else
-        // would land on the stage it is describing.
-        <WithTooltip key={id} side="right" tip={`${tip} (${key})`}>
+        // Side "left": the palette hugs the pane's right edge, so a tip
+        // anywhere else would hang off it or cover the stage it describes.
+        <WithTooltip key={id} side="left" tip={`${tip} (${key})`}>
           <button
             type="button"
             aria-label={label}

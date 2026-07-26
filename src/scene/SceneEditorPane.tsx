@@ -1,15 +1,21 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { IndentIncrease } from 'lucide-react'
 import { WithTooltip } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { useEditorSettings } from '@/settings/useEditorSettings'
+import { EditorSettingsMenu } from './EditorSettingsMenu'
 import { SceneEditor, type SceneEditorHandle } from './SceneEditor'
 import { SceneStage } from './SceneStage'
 import { Toolbar, type Tool } from './Toolbar'
 import { listBoxes, type BoxPlacement } from './document'
 
 /**
- * The L3 editing surface for a single scene: CodeMirror source (left) + the
- * instrumented iframe render with the tool overlay (right), plus a selection
- * panel. Tool/selection state is local to the focused scene. Source changes
- * are lifted out via `onChange` so the owner persists them.
+ * The L3 editing surface for a single scene: the CodeMirror source on one side
+ * and the instrumented iframe render on the other, with every control gathered
+ * into one corner stack over the source — settings, tools, format — and a
+ * selection panel on the stage. Tool and selection state is local to the
+ * focused scene; the editor settings outlive it. Source changes are lifted out
+ * via `onChange` so the owner persists them.
  */
 export function SceneEditorPane({
   source,
@@ -21,6 +27,8 @@ export function SceneEditorPane({
   const [tool, setTool] = useState<Tool>('select')
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null)
   const editorRef = useRef<SceneEditorHandle>(null)
+  const { settings, toggleAutoFormat, toggleEditorSide } = useEditorSettings()
+  const codeOnRight = settings.editorSide === 'right'
 
   function handleCreateBox(placement: BoxPlacement) {
     editorRef.current?.createBox(placement)
@@ -42,6 +50,30 @@ export function SceneEditorPane({
     if (selectedHandle) editorRef.current?.detachJs(selectedHandle)
   }
 
+  function handleFormat() {
+    editorRef.current?.format()
+  }
+
+  // ⌥F formats from anywhere on the editing surface, including from inside the
+  // editor — which is the whole point, so unlike the app's other shortcuts this
+  // one deliberately does not bow out of contenteditable.
+  useEffect(function bindFormatShortcut() {
+    function onKeyDown(event: KeyboardEvent) {
+      // Option+F types "ƒ" on macOS, so match the physical key, not `key`.
+      if (!event.altKey || event.metaKey || event.ctrlKey) return
+      if (event.code !== 'KeyF') return
+      const target = event.target as HTMLElement | null
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return
+      // Cancels the "ƒ" the editor would otherwise be handed.
+      event.preventDefault()
+      editorRef.current?.format()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return function unbind() {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
+
   function handleRename() {
     if (!selectedHandle) return
     const box = listBoxes(source).find((b) => b.handle === selectedHandle)
@@ -60,16 +92,45 @@ export function SceneEditorPane({
 
   return (
     <div className="grid h-full min-h-0 grid-cols-2">
-      <div className="min-h-0 overflow-hidden border-r">
+      {/* Which half each pane takes is CSS `order`, not JSX order: swapping the
+          children would remount CodeMirror and take the undo history with it. */}
+      <div
+        className={cn(
+          'relative min-h-0 overflow-hidden',
+          codeOnRight ? 'order-2 border-l' : 'order-1 border-r',
+        )}
+      >
         <SceneEditor
           ref={editorRef}
           value={source}
           onChange={onChange}
           onCursorBox={setSelectedHandle}
+          autoFormat={settings.autoFormat}
         />
+        {/* One corner stack over the source: the settings gear, the tools
+            beneath it, then Format. It lives on the editor side because that is
+            the half that follows the person around when the sides are swapped,
+            and the tools write code as much as they draw. */}
+        <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
+          <EditorSettingsMenu
+            settings={settings}
+            onToggleAutoFormat={toggleAutoFormat}
+            onToggleEditorSide={toggleEditorSide}
+          />
+          <Toolbar tool={tool} onToolChange={setTool} />
+          <WithTooltip side="left" tip="Re-indent the source now (⌥F)">
+            <button
+              type="button"
+              aria-label="Format source"
+              onClick={handleFormat}
+              className="bg-popover shadow-raised text-muted-foreground hover:text-foreground flex size-9 items-center justify-center rounded-lg border transition-colors"
+            >
+              <IndentIncrease className="size-4" />
+            </button>
+          </WithTooltip>
+        </div>
       </div>
-      <div className="relative min-h-0">
-        <Toolbar tool={tool} onToolChange={setTool} />
+      <div className={cn('relative min-h-0', codeOnRight ? 'order-1' : 'order-2')}>
         <SceneStage
           source={source}
           tool={tool}
