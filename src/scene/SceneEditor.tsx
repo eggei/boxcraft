@@ -32,6 +32,8 @@ export interface SceneEditorHandle {
   attachJs: (handle: string) => void
   /** Detach a box's JS wiring in one undo step. */
   detachJs: (handle: string) => void
+  /** Re-indent the document now, whatever the auto-format setting says. */
+  format: () => void
 }
 
 interface SceneEditorProps {
@@ -281,6 +283,11 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(
             changes: { from: 0, to: source.length, insert: next },
           })
           onChangeRef.current(next)
+        },
+
+        format() {
+          const view = viewRef.current
+          if (view) formatDocument(view)
         },
       }
     })

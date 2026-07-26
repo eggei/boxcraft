@@ -30,34 +30,51 @@ describe('EditorSettingsMenu', () => {
     expect(
       screen.getByRole('menuitemcheckbox', { name: /Auto-format/ }),
     ).toHaveAttribute('aria-checked', 'true')
-    expect(
-      screen.getByRole('menuitemcheckbox', { name: /Code on the right/ }),
-    ).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('reflects settings that are not the defaults', async () => {
-    const { user } = renderMenu({ autoFormat: false, editorSide: 'right' })
+  it('reflects an auto-format setting that is off', async () => {
+    const { user } = renderMenu({ autoFormat: false, editorSide: 'left' })
 
     await openMenu(user)
 
     expect(
       screen.getByRole('menuitemcheckbox', { name: /Auto-format/ }),
     ).toHaveAttribute('aria-checked', 'false')
-    expect(
-      screen.getByRole('menuitemcheckbox', { name: /Code on the right/ }),
-    ).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('reports each tick and stays open so both can be changed at once', async () => {
-    const { user, onToggleAutoFormat, onToggleEditorSide } = renderMenu()
+  it('names the side the code will move to, not the side it is on', async () => {
+    const { user } = renderMenu({ autoFormat: true, editorSide: 'left' })
+
+    await openMenu(user)
+
+    expect(screen.getByRole('menuitem', { name: 'Code on the right' })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: 'Code on the left' })).toBeNull()
+  })
+
+  it('offers the way back once the code is on the right', async () => {
+    const { user } = renderMenu({ autoFormat: true, editorSide: 'right' })
+
+    await openMenu(user)
+
+    expect(screen.getByRole('menuitem', { name: 'Code on the left' })).toBeVisible()
+  })
+
+  it('reports the swap when the layout item is chosen', async () => {
+    const { user, onToggleEditorSide } = renderMenu()
+
+    await openMenu(user)
+    await user.click(screen.getByRole('menuitem', { name: 'Code on the right' }))
+
+    expect(onToggleEditorSide).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays open when auto-format is ticked, so more can be changed', async () => {
+    const { user, onToggleAutoFormat } = renderMenu()
 
     await openMenu(user)
     await user.click(screen.getByRole('menuitemcheckbox', { name: /Auto-format/ }))
-    await user.click(
-      screen.getByRole('menuitemcheckbox', { name: /Code on the right/ }),
-    )
 
     expect(onToggleAutoFormat).toHaveBeenCalledTimes(1)
-    expect(onToggleEditorSide).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('menuitem', { name: 'Code on the right' })).toBeVisible()
   })
 })
