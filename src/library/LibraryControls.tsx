@@ -190,16 +190,14 @@ function ImportDialog({
           <>
             <p className="text-muted-foreground mt-2 text-sm">{error}</p>
             <div className="mt-5 flex justify-end">
-              <WithTooltip tip="Dismiss — nothing was imported">
-                <button
-                  type="button"
-                  autoFocus
-                  onClick={onDismiss}
-                  className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
-                >
-                  Close
-                </button>
-              </WithTooltip>
+              <button
+                type="button"
+                autoFocus
+                onClick={onDismiss}
+                className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
+              >
+                Close
+              </button>
             </div>
           </>
         ) : (
@@ -220,37 +218,31 @@ function ImportDialog({
                 now with them?
               </p>
               <div className="mt-5 flex flex-wrap justify-end gap-2">
-                <WithTooltip tip="Dismiss — nothing will be imported">
-                  <button
-                    type="button"
-                    onClick={onDismiss}
-                    disabled={busy}
-                    className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </WithTooltip>
-                <WithTooltip tip="Discard every scene you have now and keep only the imported ones">
-                  <button
-                    type="button"
-                    onClick={() => onConfirm('replace')}
-                    disabled={busy}
-                    className="bg-destructive hover:bg-destructive/90 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                  >
-                    Replace library
-                  </button>
-                </WithTooltip>
-                <WithTooltip tip="Keep your scenes and add the imported ones alongside them">
-                  <button
-                    type="button"
-                    autoFocus
-                    onClick={() => onConfirm('merge')}
-                    disabled={busy}
-                    className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
-                  >
-                    Add to library
-                  </button>
-                </WithTooltip>
+                <button
+                  type="button"
+                  onClick={onDismiss}
+                  disabled={busy}
+                  className="hover:bg-muted rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onConfirm('replace')}
+                  disabled={busy}
+                  className="bg-destructive hover:bg-destructive/90 rounded-md px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                >
+                  Replace library
+                </button>
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => onConfirm('merge')}
+                  disabled={busy}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
+                >
+                  Add to library
+                </button>
               </div>
             </>
           )

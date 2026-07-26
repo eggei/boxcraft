@@ -1,7 +1,8 @@
 // Headless scene-list domain module.
 //
 // Pure operations over an array of scenes: create, seed, add, duplicate,
-// archive/unarchive, reorder, rename, and the active/archived projections.
+// archive/unarchive, delete/restore, reorder, rename, and the active/archived
+// projections.
 // No I/O, no clock, no React — callers pass ids and timestamps in. The
 // persistence layer is a dumb store of whatever these functions return.
 
@@ -193,6 +194,38 @@ export function unarchiveScene(scenes: Scene[], id: string): Scene[] {
     (s) => s.archivedAt !== null && s.id !== id,
   )
   return [...active, restored, ...stillArchived]
+}
+
+/**
+ * Drop a scene from the library outright. Nothing is left behind — unlike
+ * archiving there is no record to come back from, so the only way back is
+ * `restoreScene` with the scene itself in hand.
+ */
+export function deleteScene(scenes: Scene[], id: string): Scene[] {
+  if (!scenes.some((s) => s.id === id)) return scenes
+  const remaining = reflow(activeScenes(scenes).filter((s) => s.id !== id))
+  const archived = scenes.filter((s) => s.archivedAt !== null && s.id !== id)
+  return [...remaining, ...archived]
+}
+
+/**
+ * Put a deleted scene back at the position it held, so an undo lands the card
+ * where the user last saw it rather than at the end of the feed.
+ */
+export function restoreScene(scenes: Scene[], scene: Scene): Scene[] {
+  if (scenes.some((s) => s.id === scene.id)) return scenes
+
+  const active = activeScenes(scenes)
+  const archived = scenes.filter((s) => s.archivedAt !== null)
+  if (scene.archivedAt !== null) return [...active, ...archived, scene]
+
+  const at = Math.min(Math.max(scene.order, 0), active.length)
+  const nextActive = reflow([
+    ...active.slice(0, at),
+    scene,
+    ...active.slice(at),
+  ])
+  return [...nextActive, ...archived]
 }
 
 export function reorderScenes(scenes: Scene[], orderedIds: string[]): Scene[] {

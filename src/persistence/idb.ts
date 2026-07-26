@@ -45,10 +45,25 @@ export async function putRecord<T>(store: string, value: T): Promise<void> {
   }
 }
 
+export async function deleteRecord(
+  store: string,
+  key: IDBValidKey,
+): Promise<void> {
+  const db = await openDB()
+  try {
+    const tx = db.transaction(store, 'readwrite')
+    const done = txDone(tx)
+    tx.objectStore(store).delete(key)
+    await done
+  } finally {
+    db.close()
+  }
+}
+
 /**
  * Swap the store's whole contents in one transaction. Autosave only ever puts,
- * so this is the only path that removes records — an import that replaces the
- * library must not leave the old ones behind.
+ * so removal is always explicit — an import that replaces the library must not
+ * leave the old records behind.
  */
 export async function replaceAllRecords<T>(
   store: string,

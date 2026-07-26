@@ -19,6 +19,7 @@ import { activeScenes, type Scene } from '@/scenes/sceneList'
 import { editPath, feedPath, pageForPath, ROUTES } from '@/scenes/navigation'
 import { useTheme } from '@/theme/useTheme'
 import { WithTooltip } from '@/components/ui/tooltip'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { LibraryControls } from '@/library/LibraryControls'
 import { type ImportMode } from '@/library/libraryFile'
 
@@ -35,6 +36,8 @@ function App() {
     duplicateScene,
     archiveScene,
     unarchiveScene,
+    deleteScene,
+    restoreScene,
     renameScene,
     reorderScenes,
     updateSource,
@@ -54,7 +57,9 @@ function App() {
   const editing = active.find((scene) => scene.id === editMatch?.params.sceneId)
   /** The feed's centered scene: from the URL, else the first card. */
   const feedSceneId = feedMatch?.params.sceneId ?? active[0]?.id
-  const [undoId, setUndoId] = useUndoToast()
+  /** The scene a delete is waiting on confirmation for; nothing has gone yet. */
+  const [pendingDelete, setPendingDelete] = useState<Scene | null>(null)
+  const [deleted, setDeleted] = useUndoToast()
 
   const startEditing = useCallback(() => {
     if (feedSceneId) navigate(editPath(feedSceneId))
@@ -66,30 +71,39 @@ function App() {
     navigate(editPath(addScene()))
   }, [addScene, navigate])
 
-  // Soft-delete = archive + an undo toast (no confirm dialog).
+  // Deleting is the permanent path — Archive is the one you come back from — so
+  // it asks first. The undo toast afterwards is a few seconds of grace, held in
+  // memory only: once it goes, so has the scene.
   const handleDelete = useCallback(
     (id: string) => {
-      archiveScene(id)
-      setUndoId(id)
+      const scene = scenes.find((candidate) => candidate.id === id)
+      if (scene) setPendingDelete(scene)
     },
-    [archiveScene, setUndoId],
+    [scenes],
   )
+
+  const confirmDelete = useCallback(() => {
+    if (!pendingDelete) return
+    deleteScene(pendingDelete.id)
+    setDeleted(pendingDelete)
+    setPendingDelete(null)
+  }, [pendingDelete, deleteScene, setDeleted])
 
   // An import can move or drop whatever was focused, so land on the feed's
   // first scene rather than trying to keep a position that may no longer exist.
   const handleImport = useCallback(
     async (incoming: Scene[], mode: ImportMode) => {
       await importLibrary(incoming, mode)
-      setUndoId(null)
+      setDeleted(null)
       navigate(feedPath())
     },
-    [importLibrary, navigate, setUndoId],
+    [importLibrary, navigate, setDeleted],
   )
 
   const handleUndo = useCallback(() => {
-    if (undoId) unarchiveScene(undoId)
-    setUndoId(null)
-  }, [undoId, setUndoId, unarchiveScene])
+    if (deleted) restoreScene(deleted)
+    setDeleted(null)
+  }, [deleted, setDeleted, restoreScene])
 
   // Scrolling the feed rewrites the URL in place: a reload or a shared link
   // comes back to the same card, without an entry per card in the history.
@@ -310,7 +324,23 @@ function App() {
         )}
       </main>
 
-      {undoId && (
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete scene"
+          confirmLabel="Delete permanently"
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        >
+          <p>
+            “{pendingDelete.title || 'Untitled'}” will be deleted permanently.
+            This can't be undone: it won't appear in Archived, and the only way
+            back is the brief Undo right after.
+          </p>
+          <p>Archive it instead if you might want it again later.</p>
+        </ConfirmDialog>
+      )}
+
+      {deleted && (
         <div
           role="status"
           className="bg-popover shadow-raised fixed bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm"
@@ -331,20 +361,24 @@ function App() {
   )
 }
 
-/** The id awaiting an undo, cleared automatically after a few seconds. */
+/**
+ * The deleted scene awaiting an undo, cleared automatically after a few seconds.
+ * It holds the whole scene, not an id: the record is already gone from storage,
+ * so this copy is the only thing an undo has left to restore from.
+ */
 function useUndoToast() {
-  const [undoId, setUndoId] = useState<string | null>(null)
+  const [deleted, setDeleted] = useState<Scene | null>(null)
 
   useEffect(
     function dismissToast() {
-      if (!undoId) return
-      const timer = setTimeout(() => setUndoId(null), 6000)
+      if (!deleted) return
+      const timer = setTimeout(() => setDeleted(null), 6000)
       return () => clearTimeout(timer)
     },
-    [undoId],
+    [deleted],
   )
 
-  return [undoId, setUndoId] as const
+  return [deleted, setDeleted] as const
 }
 
 /**

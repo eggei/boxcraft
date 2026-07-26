@@ -1,4 +1,5 @@
 import {
+  deleteRecord,
   getAllRecords,
   getRecord,
   putRecord,
@@ -11,6 +12,11 @@ export type { Scene }
 
 export async function saveScene(scene: Scene): Promise<void> {
   await putRecord(SCENES_STORE, scene)
+}
+
+/** Drop one scene's record for good. Autosave only puts, so this is explicit. */
+export async function removeScene(id: string): Promise<void> {
+  await deleteRecord(SCENES_STORE, id)
 }
 
 export async function getScene(id: string): Promise<Scene | undefined> {

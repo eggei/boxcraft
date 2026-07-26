@@ -43,6 +43,7 @@ export function SceneFeed({
   onRename: (id: string, title: string) => void
   onDuplicate: (id: string) => void
   onArchive: (id: string) => void
+  /** Asks for a delete; the owner confirms it before anything is removed. */
   onDelete: (id: string) => void
   onCurrentSceneChange?: (sceneId: string) => void
   /** Clicking a card's render opens that scene for editing. */
@@ -161,7 +162,7 @@ export function SceneFeed({
                 </IconButton>
                 <IconButton
                   label="Delete"
-                  tip="Delete this scene — there's a brief undo afterwards"
+                  tip="Delete this scene for good — you'll be asked to confirm first"
                   onClick={() => onDelete(scene.id)}
                 >
                   <Trash2 className="size-4" />

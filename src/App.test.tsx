@@ -117,6 +117,119 @@ describe('App', () => {
   })
 })
 
+describe('deleting a scene', () => {
+  /** The Delete button on the first feed card. */
+  async function clickDelete(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findAllByTestId('scene-card')
+    const [deleteButton] = screen.getAllByRole('button', { name: 'Delete' })
+    await user.click(deleteButton)
+    return screen.findByRole('dialog')
+  }
+
+  it('asks for confirmation and says the deletion is permanent', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    const dialog = await clickDelete(user)
+
+    expect(dialog).toHaveTextContent('Glow button')
+    expect(dialog).toHaveTextContent(/permanently/i)
+    expect(dialog).toHaveTextContent(/can't be undone/i)
+    // Nothing is gone while the question is still on screen.
+    expect(await getScene('seed-1')).toBeDefined()
+  })
+
+  it('keeps the scene when the confirmation is cancelled', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    await clickDelete(user)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('scene-card')).toHaveLength(3)
+    expect(await getScene('seed-1')).toBeDefined()
+  })
+
+  it('keeps the scene when the confirmation is dismissed with Escape', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    await clickDelete(user)
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('scene-card')).toHaveLength(3)
+  })
+
+  it('does not create a scene when N is pressed with the dialog open', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    await clickDelete(user)
+    await user.keyboard('n')
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(await getAllScenes()).toHaveLength(3)
+  })
+
+  it('removes the scene from storage on confirmation — it is not archived', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    await clickDelete(user)
+    await user.click(screen.getByRole('button', { name: 'Delete permanently' }))
+
+    await waitFor(async () => {
+      expect(await getScene('seed-1')).toBeUndefined()
+    })
+    expect(screen.getAllByTestId('scene-card')).toHaveLength(2)
+    expect(screen.getByRole('status')).toHaveTextContent('Scene deleted')
+
+    // Gone for good: the archive has nothing to restore either.
+    await user.click(screen.getByRole('link', { name: 'Archived' }))
+    expect(await screen.findByText('No archived scenes.')).toBeInTheDocument()
+  })
+
+  it('undo puts the deleted scene back in its old position, and in storage', async () => {
+    const user = userEvent.setup()
+    renderApp()
+    await screen.findAllByTestId('scene-card')
+
+    const [, secondDelete] = screen.getAllByRole('button', { name: 'Delete' })
+    await user.click(secondDelete)
+    await user.click(
+      await screen.findByRole('button', { name: 'Delete permanently' }),
+    )
+    await waitFor(async () => expect(await getScene('seed-2')).toBeUndefined())
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }))
+
+    await waitFor(async () => {
+      expect((await getScene('seed-2'))?.title).toBe('Gradient card')
+    })
+    expect(
+      screen.getAllByRole('textbox').map((input) => (input as HTMLInputElement).value),
+    ).toEqual(['Glow button', 'Gradient card', 'Pulsing dot'])
+  })
+
+  it('a deleted scene stays gone across a reload', async () => {
+    const user = userEvent.setup()
+    const { unmount } = renderApp()
+
+    await clickDelete(user)
+    await user.click(screen.getByRole('button', { name: 'Delete permanently' }))
+    await waitFor(async () => expect(await getScene('seed-1')).toBeUndefined())
+
+    unmount()
+    renderApp()
+
+    expect(await screen.findByDisplayValue('Gradient card')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Glow button')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('scene-card')).toHaveLength(2)
+  })
+})
+
 describe('routes', () => {
   it('lands on the feed from the root', async () => {
     renderApp('/')
