@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { getAllScenes, getScene } from './persistence/scenes'
+import { SCENE_PITCH } from './scenes/SceneFeed'
 import { LIBRARY_FORMAT, LIBRARY_VERSION } from './library/libraryFile'
 
 /**
@@ -265,9 +266,8 @@ describe('routes', () => {
   })
 
   it('scrolls the feed to the scene named in the URL', async () => {
-    // jsdom does no layout, so every element measures 0 and scrollTop never
-    // moves. Give the scroller a viewport height and record what it is set to.
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    // jsdom does no layout, so record what scrollTop is set to rather than
+    // reading where the feed ended up.
     const scrollTops: number[] = []
     vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(
       (value) => scrollTops.push(value),
@@ -276,8 +276,8 @@ describe('routes', () => {
     renderApp('/feed/seed-3')
     await screen.findAllByTestId('scene-card')
 
-    // Every card is one viewport tall, so the third one is two viewports down.
-    expect(scrollTops).toContain(1600)
+    // Cards rest one pitch apart, so the third one is two pitches down.
+    expect(scrollTops).toContain(2 * SCENE_PITCH)
     vi.restoreAllMocks()
   })
 
