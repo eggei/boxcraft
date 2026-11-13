@@ -49,14 +49,39 @@ describe('SceneFeed', () => {
     expect(next.style.transform).toMatch(/^scale\(0\.\d+\)$/)
   })
 
-  it('runs only the centered scene — a tip is static, never an iframe', () => {
-    const { container } = render(<SceneFeed scenes={SCENES} {...feedProps()} />)
+  it('runs only the centered scene, shows its neighbors script-free and skips the rest', () => {
+    const scenes: Scene[] = [
+      ...SCENES,
+      { id: 'c', title: 'Far', source: '<html>c</html>', order: 2, archivedAt: null },
+    ]
+    const { container } = render(<SceneFeed scenes={scenes} {...feedProps()} />)
 
     const frames = Array.from(container.querySelectorAll('iframe'))
-    expect(frames.map((frame) => frame.title)).toEqual(['Glow'])
+    expect(frames.map((frame) => frame.title)).toEqual(['Glow', 'Card (still)'])
     // The one running scene still can't reach the app: scripts yes, origin no.
     expect(frames[0]).toHaveAttribute('sandbox', 'allow-scripts')
-    expect(screen.getByLabelText('Card (preview)')).toBeInTheDocument()
+    // The neighbor shows its real artwork, but nothing in it runs.
+    expect(frames[1]).toHaveAttribute('sandbox', '')
+    expect(frames[1]).toHaveAttribute('srcdoc', '<html>b</html>')
+    // Two cards out is off screen: a placeholder with no frame.
+    expect(screen.getByLabelText('Far (preview)')).toBeInTheDocument()
+  })
+
+  it('renders frames on both sides of a centered card in the middle', () => {
+    const scenes: Scene[] = [
+      ...SCENES,
+      { id: 'c', title: 'Far', source: '<html>c</html>', order: 2, archivedAt: null },
+    ]
+    const { container } = render(
+      <SceneFeed scenes={scenes} focusSceneId="b" {...feedProps()} />,
+    )
+
+    const frames = Array.from(container.querySelectorAll('iframe'))
+    expect(frames.map((frame) => frame.title)).toEqual([
+      'Glow (still)',
+      'Card',
+      'Far (still)',
+    ])
   })
 
   it('fades the top and bottom edges so the stack reads as rolling', () => {
