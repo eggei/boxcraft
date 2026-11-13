@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Link,
   Navigate,
@@ -14,7 +14,6 @@ import { useScenes } from "@/scenes/useScenes";
 import { SceneFeed } from "@/scenes/SceneFeed";
 import { FilesView } from "@/scenes/FilesView";
 import { ArchivedView } from "@/scenes/ArchivedView";
-import { SceneEditorPane } from "@/scene/SceneEditorPane";
 import { activeScenes, type Scene } from "@/scenes/sceneList";
 import { editPath, feedPath, pageForPath, ROUTES } from "@/scenes/navigation";
 import { useTheme } from "@/theme/useTheme";
@@ -22,6 +21,13 @@ import { WithTooltip } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LibraryControls } from "@/library/LibraryControls";
 import { type ImportMode } from "@/library/libraryFile";
+
+// The editor pulls in CodeMirror, which is most of the app's weight, so it
+// loads as its own chunk the first time a scene is opened for editing. The
+// feed, files and archive pages never pay for it.
+const SceneEditorPane = lazy(() =>
+  import("@/scene/SceneEditorPane").then((module) => ({ default: module.SceneEditorPane })),
+);
 
 /**
  * The shell: header chrome plus the routed pages. Where the app is — files,
@@ -269,12 +275,16 @@ function App() {
                   path={ROUTES.editScene}
                   element={
                     editing ? (
-                      <SceneEditorPane
-                        key={editing.id}
-                        source={editing.source}
-                        onChange={(source) => updateSource(editing.id, source)}
-                        onExit={() => navigate(feedPath(editing.id))}
-                      />
+                      <Suspense
+                        fallback={<p className="text-muted-foreground p-8 text-sm">Loading…</p>}
+                      >
+                        <SceneEditorPane
+                          key={editing.id}
+                          source={editing.source}
+                          onChange={(source) => updateSource(editing.id, source)}
+                          onExit={() => navigate(feedPath(editing.id))}
+                        />
+                      </Suspense>
                     ) : (
                       // The URL names a scene that was archived or never existed.
                       <Navigate to={feedPath()} replace />
