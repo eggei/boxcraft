@@ -12,7 +12,9 @@ import {
   type BridgeMessage,
 } from './stageBridge'
 
-const WITH_BOX = createBox(DEFAULT_SOURCE, { kind: 'point', x: 10, y: 20 }).source
+const created = createBox(DEFAULT_SOURCE, { kind: 'point', x: 10, y: 20 })
+if (!created.ok) throw new Error(created.problem)
+const WITH_BOX = created.source
 
 /**
  * A stand-in for the scene's window: its own document, its own event target,
