@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { EditorView } from "@codemirror/view";
 import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SOURCE } from "@/scenes/sceneList";
@@ -244,10 +245,11 @@ describe("SceneEditorPane stage clicks", () => {
   afterEach(() => vi.useRealTimers());
 
   /** DEFAULT_SOURCE with box-1 and box-2. */
-  const TWO_BOXES = [1, 2].reduce(
-    (source, i) => createBox(source, { kind: "point", x: i * 10, y: i * 10 }).source,
-    DEFAULT_SOURCE,
-  );
+  const TWO_BOXES = [1, 2].reduce((source, i) => {
+    const result = createBox(source, { kind: "point", x: i * 10, y: i * 10 });
+    if (!result.ok) throw new Error(result.problem);
+    return result.source;
+  }, DEFAULT_SOURCE);
 
   function clickOnStage(handle: string) {
     const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
@@ -299,7 +301,11 @@ describe("SceneEditorPane box dragging", () => {
   beforeEach(() => localStorage.clear());
 
   /** DEFAULT_SOURCE with box-1 at (10, 20), 100 × 100. */
-  const ONE_BOX = createBox(DEFAULT_SOURCE, { kind: "point", x: 10, y: 20 }).source;
+  const ONE_BOX = (() => {
+    const result = createBox(DEFAULT_SOURCE, { kind: "point", x: 10, y: 20 });
+    if (!result.ok) throw new Error(result.problem);
+    return result.source;
+  })();
 
   /** Deliver a bridge message to the stage, as its iframe would. */
   function fromStage(data: Record<string, unknown>) {
@@ -345,5 +351,149 @@ describe("SceneEditorPane box dragging", () => {
     onChange.mockClear();
     fireEvent.keyDown(container.querySelector(".cm-content")!, { key: "z", ctrlKey: true });
     expect(onChange).toHaveBeenLastCalledWith(ONE_BOX);
+  });
+});
+
+describe("SceneEditorPane Box tool notice", () => {
+  beforeEach(() => localStorage.clear());
+
+  const NO_CANVAS = DEFAULT_SOURCE.replace('<div class="canvas"></div>', "<div></div>");
+  const NOTICE = 'Add an element with class="canvas" to draw boxes';
+
+  it("explains why boxes can't be drawn when the scene has no canvas", async () => {
+    const user = userEvent.setup();
+    render(<SceneEditorPane source={NO_CANVAS} onChange={vi.fn()} />);
+    expect(screen.queryByText(NOTICE)).toBeNull(); // only while the Box tool is armed
+
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it("drops the notice as soon as the source gains a canvas", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SceneEditorPane source={NO_CANVAS} onChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.getByText(NOTICE)).toBeVisible();
+
+    rerender(<SceneEditorPane source={DEFAULT_SOURCE} onChange={vi.fn()} />);
+
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it("shows nothing for a scene that can take a box", async () => {
+    const user = userEvent.setup();
+    render(<SceneEditorPane source={DEFAULT_SOURCE} onChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("SceneEditorPane rename", () => {
+  beforeEach(() => localStorage.clear());
+
+  /** DEFAULT_SOURCE with box-1 and box-2 on the canvas. */
+  function twoBoxes(): string {
+    let source = DEFAULT_SOURCE;
+    for (const x of [0, 50]) {
+      const result = createBox(source, { kind: "point", x, y: 0 });
+      if (!result.ok) throw new Error(result.problem);
+      source = result.source;
+    }
+    return source;
+  }
+
+  /** The pane with its source held in state, the way the app owns it. */
+  function Harness({ initial, onChange }: { initial: string; onChange: (s: string) => void }) {
+    const [source, setSource] = useState(initial);
+    return (
+      <SceneEditorPane
+        source={source}
+        onChange={(next) => {
+          setSource(next);
+          onChange(next);
+        }}
+      />
+    );
+  }
+
+  /** Select box-1 the way the reverse sync does: by putting the cursor in its rule. */
+  function selectBox1(container: HTMLElement) {
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    const at = view.state.doc.toString().indexOf(".box-1 {") + 1;
+    act(() => view.dispatch({ selection: { anchor: at } }));
+  }
+
+  async function openRename(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    return screen.getByRole("textbox", { name: "New class name" });
+  }
+
+  function setup() {
+    withAutoFormatOff();
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(<Harness initial={twoBoxes()} onChange={onChange} />);
+    selectBox1(container);
+    return { onChange, user };
+  }
+
+  it("renames inline: Enter applies the new name and closes the field", async () => {
+    const { onChange, user } = setup();
+    const input = await openRename(user);
+    expect(input).toHaveValue("box-1");
+
+    await user.clear(input);
+    await user.type(input, "hero{Enter}");
+
+    expect(onChange).toHaveBeenLastCalledWith(expect.stringContaining('class="hero"'));
+    expect(screen.queryByRole("textbox", { name: "New class name" })).toBeNull();
+  });
+
+  it("keeps the field open with the reason when the name is taken", async () => {
+    const { onChange, user } = setup();
+    const input = await openRename(user);
+
+    await user.clear(input);
+    await user.type(input, "box-2{Enter}");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(".box-2 is already used in this scene");
+    expect(input).toBeVisible();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("refuses a name with a space in it", async () => {
+    const { onChange, user } = setup();
+    const input = await openRename(user);
+
+    await user.clear(input);
+    await user.type(input, "my box{Enter}");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/letters, digits/);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("cancels on Escape without the Escape also leaving the editor", async () => {
+    const { onChange, user } = setup();
+    const appEscape = vi.fn();
+    // Stands in for the app's window-level "Escape exits the editor" shortcut.
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") appEscape();
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    try {
+      const input = await openRename(user);
+      await user.type(input, "zzz{Escape}");
+    } finally {
+      window.removeEventListener("keydown", onWindowKeyDown);
+    }
+
+    expect(appEscape).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "New class name" })).toBeNull();
+    expect(screen.getByText(".box-1")).toBeVisible();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
