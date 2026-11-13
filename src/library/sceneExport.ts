@@ -63,12 +63,46 @@ export function copySceneHtml(source: string): Promise<void> {
   return navigator.clipboard.writeText(sceneHtml(source))
 }
 
+/** Escape text for a double-quoted HTML attribute value or element text. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 /**
- * Open the scene on its own in a new tab, from a blob URL that is revoked once
- * the tab has had time to load it.
+ * The page a new tab opens: a script-free shell that shows the scene in a
+ * full-window `sandbox="allow-scripts"` frame.
+ *
+ * Opening the scene's own document from a blob URL would not do: a blob URL
+ * takes the origin of the page that made it, so the scene's scripts would run
+ * as BoxCraft and could read the library in IndexedDB and localStorage — and a
+ * scene can arrive from someone else's library file. The shell is same-origin
+ * but runs nothing; the frame inside it, without `allow-same-origin`, gets an
+ * opaque origin, so the scene still animates and runs its scripts with no way
+ * back into the app.
  */
-export function openSceneInNewTab(source: string): void {
-  const url = URL.createObjectURL(sceneBlob(source))
+export function sceneViewerHtml(title: string, source: string): string {
+  return [
+    '<!doctype html>',
+    '<html><head><meta charset="utf-8">',
+    `<title>${escapeHtml(title || 'Scene')}</title>`,
+    '<style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style>',
+    '</head><body>',
+    `<iframe sandbox="allow-scripts" title="${escapeHtml(title || 'Scene')}" srcdoc="${escapeHtml(sceneHtml(source))}"></iframe>`,
+    '</body></html>',
+  ].join('\n')
+}
+
+/**
+ * Open the scene on its own in a new tab, sandboxed (see sceneViewerHtml), from
+ * a blob URL that is revoked once the tab has had time to load it.
+ */
+export function openSceneInNewTab(title: string, source: string): void {
+  const viewer = new Blob([sceneViewerHtml(title, source)], { type: 'text/html' })
+  const url = URL.createObjectURL(viewer)
   window.open(url, '_blank', 'noopener')
   setTimeout(() => URL.revokeObjectURL(url), OPEN_URL_LIFETIME_MS)
 }

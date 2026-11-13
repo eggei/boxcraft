@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { instrument } from '@/scene/document'
-import { sceneBlob, sceneFilename, sceneHtml, slugify } from './sceneExport'
+import { sceneBlob, sceneFilename, sceneHtml, sceneViewerHtml, slugify } from './sceneExport'
 
 const SOURCE = `<!doctype html>
 <html><head><style>.box-1 { color: red; }</style></head>
@@ -58,5 +58,33 @@ describe('sceneBlob', () => {
     const blob = sceneBlob(instrument(SOURCE))
     expect(blob.type).toBe('text/html')
     expect(await blob.text()).toBe(SOURCE)
+  })
+})
+
+describe('sceneViewerHtml', () => {
+  const SCRIPTED = `<!doctype html><html><body><div class="canvas"></div>
+<script>localStorage.setItem("x", "1"); document.title = '"><script>alert(1)</script>'</script></body></html>`
+
+  function parse(html: string) {
+    return new DOMParser().parseFromString(html, 'text/html')
+  }
+
+  it('shows the scene only inside a script-sandboxed frame without same-origin', () => {
+    const doc = parse(sceneViewerHtml('Glow', SCRIPTED))
+    const frames = doc.querySelectorAll('iframe')
+    expect(frames).toHaveLength(1)
+    expect(frames[0].getAttribute('sandbox')).toBe('allow-scripts')
+    expect(frames[0].getAttribute('srcdoc')).toBe(SCRIPTED)
+  })
+
+  it('runs nothing in the shell itself, even when the title tries to break out', () => {
+    const doc = parse(sceneViewerHtml('"><script>alert(1)</script>', SCRIPTED))
+    expect(doc.querySelectorAll('script')).toHaveLength(0)
+    expect(doc.title).toBe('"><script>alert(1)</script>')
+  })
+
+  it('strips render-only instrumentation from the framed scene', () => {
+    const doc = parse(sceneViewerHtml('Glow', instrument(SOURCE)))
+    expect(doc.querySelector('iframe')?.getAttribute('srcdoc')).toBe(SOURCE)
   })
 })

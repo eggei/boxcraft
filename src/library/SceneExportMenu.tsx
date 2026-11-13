@@ -67,7 +67,7 @@ export function SceneExportMenu({
             Download .html
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={copy}>Copy HTML</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => openSceneInNewTab(source)}>
+          <DropdownMenuItem onSelect={() => openSceneInNewTab(title, source)}>
             Open in new tab
           </DropdownMenuItem>
         </DropdownMenuContent>

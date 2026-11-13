@@ -82,7 +82,7 @@ describe('SceneExportMenu', () => {
     expect(await screen.findByRole('status')).toHaveTextContent("Couldn't copy")
   })
 
-  it('opens the scene in a new tab from an HTML blob URL, revoked later', async () => {
+  it('opens the scene sandboxed in a new tab from an HTML blob URL, revoked later', async () => {
     const { blobs, open, revoke } = captureBlobs()
     const user = await openMenu()
     // Watch for the revoke being scheduled rather than faking timers, which
@@ -94,7 +94,13 @@ describe('SceneExportMenu', () => {
     expect(open).toHaveBeenCalledWith('blob:0', '_blank', 'noopener')
     const blob = blobs.get('blob:0')!
     expect(blob.type).toBe('text/html')
-    expect(await blob.text()).toBe(SOURCE)
+    // The blob is a script-free shell; the scene itself only runs inside a
+    // sandboxed frame, never with the app's origin.
+    const viewer = new DOMParser().parseFromString(await blob.text(), 'text/html')
+    expect(viewer.querySelectorAll('script')).toHaveLength(0)
+    const frame = viewer.querySelector('iframe')!
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(frame.getAttribute('srcdoc')).toBe(SOURCE)
 
     // The tab needs the URL to load, so it outlives the click...
     expect(revoke).not.toHaveBeenCalled()
