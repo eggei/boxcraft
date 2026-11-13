@@ -248,6 +248,16 @@ describe("routes", () => {
     await waitFor(() => expect(document.querySelector(".cm-content")).not.toBeNull());
   });
 
+  it("offers the open scene's export from the editor header", async () => {
+    const user = userEvent.setup();
+    renderApp("/edit/seed-2");
+    await screen.findByLabelText("Scene title");
+
+    await user.click(screen.getByRole("button", { name: "Export scene" }));
+
+    expect(screen.getByRole("menuitem", { name: "Download .html" })).toBeInTheDocument();
+  });
+
   it("falls back to the feed when the URL names a scene that is gone", async () => {
     renderApp("/edit/does-not-exist");
     expect(await screen.findAllByTestId("scene-card")).not.toHaveLength(0);

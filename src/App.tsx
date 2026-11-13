@@ -22,6 +22,7 @@ import { useTheme } from "@/theme/useTheme";
 import { WithTooltip } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LibraryControls } from "@/library/LibraryControls";
+import { SceneExportMenu } from "@/library/SceneExportMenu";
 import { type ImportMode } from "@/library/libraryFile";
 
 // The editor pulls in CodeMirror, which is most of the app's weight, so it
@@ -211,6 +212,7 @@ function App() {
         </WithTooltip>
 
         {page !== "edit" && <LibraryControls scenes={scenes} onImport={handleImport} />}
+        {editing && <SceneExportMenu title={editing.title} source={editing.source} />}
 
         {page === "feed" && (
           <HeaderLink to={ROUTES.files} tip="Browse every scene as a grid">

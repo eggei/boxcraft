@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SceneFeed } from './SceneFeed'
 import { CANVAS_SIZE, type Scene } from './sceneList'
@@ -113,5 +114,17 @@ describe('SceneFeed', () => {
     screen.getByRole('button', { name: 'Edit Card' }).click()
 
     expect(onOpen).toHaveBeenCalledWith('b')
+  })
+
+  it('exports the scene on its own card', async () => {
+    const user = userEvent.setup()
+    render(<SceneFeed scenes={SCENES} focusSceneId="a" {...feedProps()} />)
+    const [first] = screen.getAllByTestId('scene-card')
+
+    await user.click(within(first).getByRole('button', { name: 'Export scene' }))
+
+    expect(screen.getByRole('menuitem', { name: 'Download .html' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Copy HTML' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Open in new tab' })).toBeInTheDocument()
   })
 })

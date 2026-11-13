@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Copy, Archive, Trash2 } from 'lucide-react'
 import { WithTooltip } from '@/components/ui/tooltip'
+import { SceneExportMenu } from '@/library/SceneExportMenu'
 import { activeScenes, CANVAS_SIZE, type Scene } from './sceneList'
 import { ScenePreview, type PreviewMode } from './ScenePreview'
 
@@ -153,6 +154,7 @@ export function SceneFeed({
                 >
                   <Copy className="size-4" />
                 </IconButton>
+                <SceneExportMenu title={scene.title} source={scene.source} />
                 <IconButton
                   label="Archive"
                   tip="Move this scene out of the feed and into the archive"
