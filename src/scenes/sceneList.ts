@@ -246,3 +246,14 @@ export function renameScene(
 ): Scene[] {
   return scenes.map((s) => (s.id === id ? { ...s, title } : s))
 }
+
+/**
+ * Ids of the scenes in `after` that are new or were replaced since `before`.
+ * Every operation here leaves an untouched scene as the very same object, so an
+ * identity check is enough — and it is what lets autosave write only what an
+ * edit actually changed. Scenes missing from `after` are not reported.
+ */
+export function changedSceneIds(before: Scene[], after: Scene[]): string[] {
+  const previous = new Map(before.map((s) => [s.id, s]))
+  return after.filter((s) => previous.get(s.id) !== s).map((s) => s.id)
+}
