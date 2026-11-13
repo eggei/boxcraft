@@ -24,9 +24,11 @@ import {
   detachJs,
   ensureRule,
   listBoxes,
+  moveResizeBox,
   rename,
   resolveTokens,
   ruleRangeOf,
+  type BoxGeometry,
   type BoxPlacement,
   type CreateBoxProblem,
   type RenameProblem,
@@ -52,6 +54,8 @@ export interface SceneEditorHandle {
   detachJs: (handle: string) => void;
   /** Re-indent the document now, whatever the auto-format setting says. */
   format: () => void;
+  /** Apply a stage drag (rendered rect before → after) to a box's rule. */
+  moveResizeBox: (handle: string, from: BoxGeometry, to: BoxGeometry) => void;
 }
 
 interface SceneEditorProps {
@@ -205,6 +209,19 @@ function formatDocument(view: EditorView) {
   if (changes.empty) return;
   // The update listener below lifts the new source out via `onChange`.
   view.dispatch({ changes });
+}
+
+/** The smallest single change that turns `before` into `after`. */
+function changedSpan(before: string, after: string) {
+  let from = 0;
+  while (from < before.length && from < after.length && before[from] === after[from]) from++;
+  let endBefore = before.length;
+  let endAfter = after.length;
+  while (endBefore > from && endAfter > from && before[endBefore - 1] === after[endAfter - 1]) {
+    endBefore--;
+    endAfter--;
+  }
+  return { from, to: endBefore, insert: after.slice(from, endAfter) };
 }
 
 // Where Vim lives in the extension list. A compartment so the setting can be
@@ -445,6 +462,18 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       format() {
         const view = viewRef.current;
         if (view) formatDocument(view);
+      },
+
+      moveResizeBox(handleId, from, to) {
+        const view = viewRef.current;
+        if (!view) return;
+        const source = view.state.doc.toString();
+        const next = moveResizeBox(source, handleId, from, to);
+        if (next === source) return;
+        // One transaction — one ⌘Z puts the box back — spanning only the text
+        // that changed, so the cursor and selection map through untouched.
+        // The update listener reports the new source, synchronously.
+        view.dispatch({ changes: changedSpan(source, next) });
       },
     };
   });

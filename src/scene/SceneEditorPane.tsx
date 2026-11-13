@@ -11,10 +11,13 @@ import { BoxRenameField } from "./BoxRenameField";
 import {
   createBoxProblem,
   listBoxes,
+  translateHandle,
+  type BoxGeometry,
   type BoxPlacement,
   type CreateBoxProblem,
   type RenameProblem,
 } from "./document";
+import { usePreviewSource } from "./usePreviewSource";
 
 /** What the Box tool tells the person when the document has nowhere to draw. */
 const BOX_PROBLEM_NOTICE: Record<CreateBoxProblem, string> = {
@@ -47,8 +50,36 @@ export function SceneEditorPane({
   const { settings, toggleAutoFormat, toggleVimMode, toggleEditorSide } = useEditorSettings();
   const codeOnRight = settings.editorSide === "right";
 
+  // The stage renders a copy of the source that trails typing by a moment (see
+  // usePreviewSource). Tool edits go through `asToolEdit`, which shows their
+  // result at once: the editor reports the new source synchronously from inside
+  // the call, and `handleChange` sees the flag while it is still up.
+  const [previewSource, showNow] = usePreviewSource(source);
+  const toolEditRef = useRef(false);
+
+  function handleChange(next: string) {
+    onChange(next);
+    if (toolEditRef.current) showNow(next);
+  }
+
+  function asToolEdit<T>(edit: () => T): T {
+    toolEditRef.current = true;
+    try {
+      return edit();
+    } finally {
+      toolEditRef.current = false;
+    }
+  }
+
+  // Handles are positional, so the stage's (from the rendered copy) and the
+  // editor's (from the live source) can disagree while the render lags. They
+  // are translated at the boundary, in both directions.
+  const fromStage = (handle: string) => translateHandle(previewSource, source, handle);
+  const stageSelectedHandle =
+    selectedHandle && translateHandle(source, previewSource, selectedHandle);
+
   function handleCreateBox(placement: BoxPlacement) {
-    const problem = editorRef.current?.createBox(placement) ?? null;
+    const problem = asToolEdit(() => editorRef.current?.createBox(placement) ?? null);
     // On failure the Box tool stays armed, so its notice stays up until the
     // person fixes the document or picks another tool.
     if (problem) return;
@@ -59,23 +90,41 @@ export function SceneEditorPane({
   // gains a canvas (or a <style>), with nothing to reset.
   const boxProblem = tool === "box" ? createBoxProblem(source) : null;
 
-  function handleSelectBox(handle: string) {
+  function selectBox(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.selectBox(handle);
+    asToolEdit(() => editorRef.current?.selectBox(handle));
   }
 
-  function handleAttachJs(handle: string) {
+  function attachJsTo(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.attachJs(handle);
+    asToolEdit(() => editorRef.current?.attachJs(handle));
     setTool("select"); // tool reverts to Select after attaching
   }
 
+  function handleStageSelect(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) selectBox(handle);
+  }
+
+  function handleStageAttachJs(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) attachJsTo(handle);
+  }
+
+  // A drag on the stage lands as one edit to the box's rule — and is shown at
+  // once, so the box doesn't snap back for the length of the debounce.
+  function handleMoveResizeBox(stageHandle: string, from: BoxGeometry, to: BoxGeometry) {
+    const handle = fromStage(stageHandle);
+    if (handle) asToolEdit(() => editorRef.current?.moveResizeBox(handle, from, to));
+  }
+
   function handleDetachJs() {
-    if (selectedHandle) editorRef.current?.detachJs(selectedHandle);
+    const handle = selectedHandle;
+    if (handle) asToolEdit(() => editorRef.current?.detachJs(handle));
   }
 
   function handleFormat() {
-    editorRef.current?.format();
+    asToolEdit(() => editorRef.current?.format());
   }
 
   // ⌥F formats from anywhere on the editing surface, including from inside the
@@ -90,7 +139,7 @@ export function SceneEditorPane({
       if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
       // Cancels the "ƒ" the editor would otherwise be handed.
       event.preventDefault();
-      editorRef.current?.format();
+      asToolEdit(() => editorRef.current?.format());
     }
     window.addEventListener("keydown", onKeyDown);
     return function unbind() {
@@ -112,7 +161,7 @@ export function SceneEditorPane({
     const problem =
       name.trim() === selectedBox.className
         ? null // unchanged — just close
-        : (editorRef.current?.renameBox(selectedBox.handle, name) ?? null);
+        : asToolEdit(() => editorRef.current?.renameBox(selectedBox.handle, name) ?? null);
     if (!problem) setRenamingHandle(null);
     return problem;
   }
@@ -132,7 +181,7 @@ export function SceneEditorPane({
         <SceneEditor
           ref={editorRef}
           value={source}
-          onChange={onChange}
+          onChange={handleChange}
           onCursorBox={setSelectedHandle}
           autoFormat={settings.autoFormat}
           vimMode={settings.vimMode}
@@ -164,12 +213,13 @@ export function SceneEditorPane({
       </div>
       <div className={cn("relative min-h-0", codeOnRight ? "order-1" : "order-2")}>
         <SceneStage
-          source={source}
+          source={previewSource}
           tool={tool}
-          selectedHandle={selectedHandle}
+          selectedHandle={stageSelectedHandle || null}
           onCreateBox={handleCreateBox}
-          onSelectBox={handleSelectBox}
-          onAttachJs={handleAttachJs}
+          onSelectBox={handleStageSelect}
+          onAttachJs={handleStageAttachJs}
+          onMoveResizeBox={handleMoveResizeBox}
         />
         {boxProblem && (
           <div
@@ -212,7 +262,7 @@ export function SceneEditorPane({
             >
               <button
                 type="button"
-                onClick={selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)}
+                onClick={selectedHasJs ? handleDetachJs : () => attachJsTo(selectedHandle!)}
                 className="hover:bg-muted rounded-md border px-2 py-1"
               >
                 {selectedHasJs ? "Detach JS" : "Attach JS"}

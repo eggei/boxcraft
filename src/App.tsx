@@ -135,13 +135,19 @@ function App() {
   useEffect(
     function keyboardShortcuts() {
       function onKeyDown(event: KeyboardEvent) {
+        // Something closer to the key already acted on it — CodeMirror claims
+        // ⌘/Ctrl+Enter for a new line, for one — so the shell stays out of it.
+        if (event.defaultPrevented) return;
         const target = event.target as HTMLElement | null;
         const inField =
           target?.tagName === "INPUT" ||
           target?.tagName === "TEXTAREA" ||
           target?.isContentEditable;
 
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        // Start Editing is the feed's action: it opens the centered card. On
+        // any other page there is no centered card, and `feedSceneId` would
+        // fall back to the first scene — the editor would jump to it.
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && page === "feed") {
           event.preventDefault();
           startEditing();
           return;

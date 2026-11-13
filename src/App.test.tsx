@@ -7,6 +7,7 @@ import { getAllScenes, getScene } from "./persistence/scenes";
 import { SCENE_PITCH } from "./scenes/SceneFeed";
 import { LIBRARY_FORMAT, LIBRARY_VERSION } from "./library/libraryFile";
 import { EDITOR_SETTINGS_KEY } from "./settings/editorSettings";
+import { BRIDGE_CHANNEL } from "./scene/stageBridge";
 
 /**
  * The app reads its location from the router, so tests mount it behind an
@@ -292,6 +293,62 @@ describe("routes", () => {
     await screen.findByLabelText("Scene title");
 
     await user.keyboard("{Escape}");
+
+    expect(await screen.findAllByTestId("scene-card")).not.toHaveLength(0);
+    expect(screen.queryByLabelText("Scene title")).not.toBeInTheDocument();
+  });
+});
+
+describe("keyboard shortcuts", () => {
+  it("starts editing the centered feed card on ⌘/Ctrl+Enter", async () => {
+    renderApp("/feed/seed-2");
+    await screen.findAllByTestId("scene-card");
+
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+
+    expect(await screen.findByLabelText("Scene title")).toHaveValue("Gradient card");
+  });
+
+  it("stays on the scene being edited on ⌘/Ctrl+Enter — it doesn't jump to the first one", async () => {
+    renderApp("/edit/seed-2");
+    await screen.findByLabelText("Scene title");
+
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true });
+
+    expect(screen.getByLabelText("Scene title")).toHaveValue("Gradient card");
+  });
+
+  it("leaves a shortcut alone once something closer to the key has claimed it", async () => {
+    renderApp("/feed/seed-2");
+    await screen.findAllByTestId("scene-card");
+
+    const claimed = new KeyboardEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    claimed.preventDefault();
+    window.dispatchEvent(claimed);
+
+    expect(screen.queryByLabelText("Scene title")).not.toBeInTheDocument();
+  });
+
+  it("still leaves on Esc pressed with focus inside the stage", async () => {
+    renderApp("/edit/seed-1");
+    await screen.findByLabelText("Scene title");
+
+    // The sandboxed stage can only tell the app about a key press through its
+    // bridge — this is the message the bridge posts for Esc.
+    const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
+    iframe.focus();
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { channel: BRIDGE_CHANNEL, type: "keydown", key: "Escape", code: "Escape" },
+        source: iframe.contentWindow,
+      }),
+    );
 
     expect(await screen.findAllByTestId("scene-card")).not.toHaveLength(0);
     expect(screen.queryByLabelText("Scene title")).not.toBeInTheDocument();
