@@ -13,6 +13,7 @@ import {
 import type { Extension, TransactionSpec } from "@codemirror/state";
 import { html } from "@codemirror/lang-html";
 import { basicSetup } from "codemirror";
+import { colorSwatches } from "./colorSwatches";
 import { editorTheme } from "./editorTheme";
 import { indentAllChanges, indentConfig } from "./format";
 import { startInsertMode, vimKeybindings } from "./vimMode";
@@ -278,6 +279,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       indentConfig,
       EditorView.lineWrapping,
       chipPlugin,
+      colorSwatches,
       selectedRuleField,
       landingLineField,
       dropLandingLineOnLeave,
