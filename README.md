@@ -62,6 +62,56 @@ Two things work differently while it is on:
   lands ready to be typed at — otherwise the first property typed would run as
   normal-mode commands.
 
+## AI editor
+
+The ✨ button in the editor's corner stack opens a chat box under the code. Ask
+for a change in plain English ("add a red circle in the middle", "make the boxes
+pulse") and it is made in the source — as one undo step, so ⌘/Ctrl+Z takes the
+whole thing back. Questions get an answer without touching the code.
+
+### Connecting a coding agent
+
+There is no backend and no built-in model: you point the editor at a **coding
+agent** — any chat API that follows the OpenAI `chat/completions` format (most
+providers offer one, and local model servers do too) — from the gear in the
+panel. The setup asks for:
+
+| Field | What it is |
+| --- | --- |
+| API URL | The provider's base URL (usually ends in `/v1`) or its full `/chat/completions` endpoint. `https` only, except `localhost`. |
+| API key | From the provider's dashboard. Optional — leave it empty for an API that needs none, such as a local model. |
+| Model | The model's name exactly as the provider lists it. There is no default. |
+| Daily limits | Optional. If your plan caps requests or tokens per day, enter them to see what's left. |
+
+An API that speaks a different format (not OpenAI-style) won't work, and one
+that doesn't allow requests from web pages (CORS) is refused by the browser; both
+are reported in the chat with what to check.
+
+The setup form also walks through a free option, **Groq**: create a key at
+<https://console.groq.com/keys>, press "Fill in Groq's values", paste the key,
+Save. That walk-through is data in `src/ai/presets.ts`; nothing else in the
+editor knows a provider's name.
+
+- **Where the key lives.** In this browser's `localStorage`
+  (`boxcraft:ai-settings`), never in a scene or a library export. The setup form
+  never shows the saved key again, only its first and last characters. A saved
+  key is only ever sent to the URL it was saved for: change the URL to another
+  host and it is dropped, not carried along.
+- **What is sent.** The current scene's source and the last few chat turns, with
+  every message, to the API URL you entered. Nothing else.
+- **Usage remaining.** The strip under the input shows requests and tokens.
+  "Left" figures come from the API's own `x-ratelimit-*-requests` headers when it
+  sends them and the browser may read them (exact), or from the daily limits you
+  entered minus what this browser has counted (marked `~`). With neither, it
+  shows what has been used in the last 24 hours — it does not guess a limit.
+  Counts are kept per API URL.
+- **What it refuses to apply.** A reply that is cut off, empty, or missing the
+  `<html>`/`<style>`/`.canvas` structure the scene already had; and any edit if
+  the code changed while the agent was writing (with an "Apply anyway" button).
+- **Known limit.** Scene previews run a scene's own `<script>` in the same
+  origin as the app, so a scene from a file you don't trust could read the saved
+  key. Use a key you can revoke, and don't import libraries you don't trust.
+
 ## Layout
 
 - `src/persistence/` — IndexedDB wrapper (`idb.ts`) and the scene store (`scenes.ts`)
@@ -71,5 +121,9 @@ Two things work differently while it is on:
 - `src/scene/` — the editor: the CodeMirror source pane, the live stage, the
   scene document helpers (`document.ts`), formatting and Vim mode
 - `src/library/` — the export/import file format (`libraryFile.ts`) and its header controls
+- `src/ai/` — the AI editor: prompt/reply rules (`prompt.ts`), the API client
+  (`agentClient.ts`), settings and URL rules (`aiSettings.ts`), usage accounting
+  (`usage.ts`), the free-option walk-through (`presets.ts`), and the chat panel
+  and setup dialog
 - `src/settings/`, `src/theme/` — editor settings and the light/dark theme, kept in `localStorage`
 - `src/components/ui/` — shadcn/ui components

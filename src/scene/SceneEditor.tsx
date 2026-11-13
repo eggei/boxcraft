@@ -15,7 +15,7 @@ import { html } from "@codemirror/lang-html";
 import { basicSetup } from "codemirror";
 import { colorSwatches } from "./colorSwatches";
 import { editorTheme } from "./editorTheme";
-import { indentAllChanges, indentConfig } from "./format";
+import { formatSource, indentAllChanges, indentConfig } from "./format";
 import { startInsertMode, vimKeybindings } from "./vimMode";
 import {
   attachJs,
@@ -54,6 +54,14 @@ export interface SceneEditorHandle {
   detachJs: (handle: string) => void;
   /** Re-indent the document now, whatever the auto-format setting says. */
   format: () => void;
+  /** The document as it stands in the editor right now. */
+  getSource: () => string;
+  /**
+   * Replace the document with `next` as one undoable edit, touching only the
+   * span that differs so the cursor and scroll position stay where they were.
+   * Returns whether anything changed.
+   */
+  applySource: (next: string) => boolean;
   /** Apply a stage drag (rendered rect before → after) to a box's rule. */
   moveResizeBox: (handle: string, from: BoxGeometry, to: BoxGeometry) => void;
 }
@@ -211,17 +219,29 @@ function formatDocument(view: EditorView) {
   view.dispatch({ changes });
 }
 
-/** The smallest single change that turns `before` into `after`. */
-function changedSpan(before: string, after: string) {
-  let from = 0;
-  while (from < before.length && from < after.length && before[from] === after[from]) from++;
-  let endBefore = before.length;
-  let endAfter = after.length;
-  while (endBefore > from && endAfter > from && before[endBefore - 1] === after[endAfter - 1]) {
-    endBefore--;
-    endAfter--;
+/**
+ * The smallest single replacement that turns `before` into `after`: everything
+ * shared at the start and the end is left alone. A whole-document replace would
+ * also be one undo step, but it would throw the cursor to the end of the
+ * insert and the scroll position with it.
+ */
+function minimalChange(before: string, after: string) {
+  let start = 0;
+  const shortest = Math.min(before.length, after.length);
+  while (start < shortest && before.charCodeAt(start) === after.charCodeAt(start)) start++;
+
+  let tail = 0;
+  while (
+    tail < shortest - start &&
+    before.charCodeAt(before.length - 1 - tail) === after.charCodeAt(after.length - 1 - tail)
+  ) {
+    tail++;
   }
-  return { from, to: endBefore, insert: after.slice(from, endAfter) };
+  return {
+    from: start,
+    to: before.length - tail,
+    insert: after.slice(start, after.length - tail),
+  };
 }
 
 // Where Vim lives in the extension list. A compartment so the setting can be
@@ -464,6 +484,23 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
         if (view) formatDocument(view);
       },
 
+      getSource() {
+        return viewRef.current?.state.doc.toString() ?? "";
+      },
+
+      applySource(next) {
+        const view = viewRef.current;
+        if (!view) return false;
+        const current = view.state.doc.toString();
+        // Tidy *before* dispatching, so the edit and its re-indent are one
+        // transaction and one ⌘Z — not an edit followed by a format.
+        const target = autoFormatRef.current ? formatSource(next) : next;
+        if (target === current) return false;
+        // The update listener lifts the new source out via `onChange`.
+        view.dispatch({ changes: minimalChange(current, target) });
+        return true;
+      },
+
       moveResizeBox(handleId, from, to) {
         const view = viewRef.current;
         if (!view) return;
@@ -473,7 +510,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
         // One transaction — one ⌘Z puts the box back — spanning only the text
         // that changed, so the cursor and selection map through untouched.
         // The update listener reports the new source, synchronously.
-        view.dispatch({ changes: changedSpan(source, next) });
+        view.dispatch({ changes: minimalChange(source, next) });
       },
     };
   });

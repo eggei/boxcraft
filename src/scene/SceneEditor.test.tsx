@@ -291,6 +291,98 @@ describe("SceneEditor Vim mode", () => {
   });
 });
 
+describe("SceneEditor applySource", () => {
+  const RECOLOURED = DEFAULT_SOURCE.replace("background: #fff", "background: #fde68a");
+
+  function mount(autoFormat = true, value = DEFAULT_SOURCE) {
+    const onChange = vi.fn();
+    const ref = createRef<SceneEditorHandle>();
+    const { container } = render(
+      <SceneEditor ref={ref} value={value} onChange={onChange} autoFormat={autoFormat} />,
+    );
+    return { onChange, handle: ref.current!, view: viewIn(container) };
+  }
+
+  it("reads back the document as it stands", () => {
+    const { handle, view } = mount();
+    view.dispatch({ changes: { from: 0, insert: "<!-- hi -->\n" } });
+
+    expect(handle.getSource()).toBe(view.state.doc.toString());
+    expect(handle.getSource().startsWith("<!-- hi -->")).toBe(true);
+  });
+
+  it("replaces the document and lifts the new source out", () => {
+    const { handle, view, onChange } = mount();
+
+    const changed = handle.applySource(RECOLOURED);
+
+    expect(changed).toBe(true);
+    expect(view.state.doc.toString()).toBe(RECOLOURED);
+    expect(onChange).toHaveBeenLastCalledWith(RECOLOURED);
+  });
+
+  it("reports no change, and dispatches nothing, for the same document", () => {
+    const { handle, onChange } = mount();
+    onChange.mockClear();
+
+    expect(handle.applySource(DEFAULT_SOURCE)).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves the cursor where it was when the edit is elsewhere", () => {
+    const { handle, view } = mount();
+    const cursor = DEFAULT_SOURCE.indexOf("</body>");
+    view.dispatch({ selection: { anchor: cursor } });
+
+    // The edit is earlier in the file, so the cursor shifts by what it added.
+    handle.applySource(RECOLOURED);
+
+    const shift = RECOLOURED.length - DEFAULT_SOURCE.length;
+    expect(view.state.selection.main.head).toBe(cursor + shift);
+    expect(view.state.doc.sliceString(view.state.selection.main.head, cursor + shift + 7)).toBe(
+      "</body>",
+    );
+  });
+
+  it("undoes in a single step", () => {
+    const { handle, view } = mount();
+    // Several separate spans changed — still one edit as far as history goes.
+    const multi = RECOLOURED.replace("min-height: 100vh", "min-height: 50vh").replace(
+      "</body>",
+      "  <p>hi</p>\n  </body>",
+    );
+
+    handle.applySource(multi);
+    fireEvent.keyDown(view.contentDOM, { key: "z", code: "KeyZ", ctrlKey: true });
+
+    expect(view.state.doc.toString()).toBe(DEFAULT_SOURCE);
+  });
+
+  it("tidies the indentation as part of the same edit when auto-format is on", () => {
+    const { handle, view } = mount(true);
+    const messy = RECOLOURED.split("\n")
+      .map((line) => line.trimStart())
+      .join("\n");
+
+    handle.applySource(messy);
+
+    expect(view.state.doc.toString()).toBe(RECOLOURED);
+    fireEvent.keyDown(view.contentDOM, { key: "z", code: "KeyZ", ctrlKey: true });
+    expect(view.state.doc.toString()).toBe(DEFAULT_SOURCE);
+  });
+
+  it("keeps the reply’s indentation when auto-format is off", () => {
+    const { handle, view } = mount(false);
+    const messy = RECOLOURED.split("\n")
+      .map((line) => line.trimStart())
+      .join("\n");
+
+    handle.applySource(messy);
+
+    expect(view.state.doc.toString()).toBe(messy);
+  });
+});
+
 describe("SceneEditor createBox", () => {
   it("reports a document with no canvas instead of throwing, and leaves it alone", () => {
     const noCanvas = DEFAULT_SOURCE.replace('<div class="canvas"></div>', "<div></div>");
