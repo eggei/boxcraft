@@ -243,6 +243,8 @@ describe("routes", () => {
   it("deep-links straight into the editor for one scene", async () => {
     renderApp("/edit/seed-2");
     expect(await screen.findByLabelText("Scene title")).toHaveValue("Gradient card");
+    // The editor arrives as its own chunk, after the header is already up.
+    await waitFor(() => expect(document.querySelector(".cm-content")).not.toBeNull());
   });
 
   it("falls back to the feed when the URL names a scene that is gone", async () => {
@@ -357,11 +359,17 @@ describe("Vim mode in the editor", () => {
   /** The editor's content element — where a key press inside the code lands. */
   const codeEditor = () => document.querySelector(".cm-content") as HTMLElement;
 
+  /**
+   * The editor is a lazily loaded chunk, so the header can be up before the
+   * code is: wait for CodeMirror itself before pressing keys into it.
+   */
+  const editorLoaded = () => waitFor(() => expect(codeEditor()).not.toBeNull());
+
   it("keeps Esc for Vim while typing in the code, but Esc from anywhere else still leaves", async () => {
     localStorage.setItem(EDITOR_SETTINGS_KEY, VIM_ON);
     const user = userEvent.setup();
     renderApp("/edit/seed-1");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: "i" });
     fireEvent.keyDown(codeEditor(), { key: "Escape" });
@@ -378,7 +386,7 @@ describe("Vim mode in the editor", () => {
 
   it("still leaves on Esc from the code when Vim is off — nothing changes for everyone else", async () => {
     renderApp("/edit/seed-1");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: "Escape" });
 
@@ -388,7 +396,7 @@ describe("Vim mode in the editor", () => {
   it("leaves on :q, back to the scene in the feed", async () => {
     localStorage.setItem(EDITOR_SETTINGS_KEY, VIM_ON);
     renderApp("/edit/seed-2");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: ":" });
     const input = document.querySelector<HTMLInputElement>(".cm-vim-panel input")!;
