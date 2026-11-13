@@ -29,7 +29,9 @@ describe('formatSource', () => {
   })
 
   it('changes only whitespace, never the rendered document', () => {
-    const messy = flatten(createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 }).source)
+    const created = createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
+    if (!created.ok) throw new Error(created.problem)
+    const messy = flatten(created.source)
     const parse = (s: string) =>
       new DOMParser().parseFromString(s, 'text/html').body.innerHTML.replace(/\s+/g, ' ')
 

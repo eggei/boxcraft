@@ -12,6 +12,9 @@ import {
   restoreScene,
   reorderScenes,
   renameScene,
+  changedSceneIds,
+  sameScene,
+  applyStoredScenes,
   DEFAULT_SOURCE,
 } from './sceneList'
 
@@ -223,5 +226,67 @@ describe('renameScene', () => {
     const scenes = renameScene(seedScenes(), 'seed-2', 'Renamed')
     expect(scenes.find((s) => s.id === 'seed-2')?.title).toBe('Renamed')
     expect(scenes.find((s) => s.id === 'seed-1')?.title).toBe('Glow button')
+  })
+})
+
+describe('changedSceneIds', () => {
+  it('reports only the scene an edit touched', () => {
+    const before = seedScenes()
+    expect(changedSceneIds(before, renameScene(before, 'seed-2', 'Renamed'))).toEqual(['seed-2'])
+  })
+
+  it('reports a new scene', () => {
+    const before = seedScenes()
+    expect(changedSceneIds(before, addScene(before, { id: 'new' }).scenes)).toEqual(['new'])
+  })
+
+  it('reports scenes whose order moved, but not the ones that kept theirs', () => {
+    const before = seedScenes()
+    const after = reorderScenes(before, ['seed-1', 'seed-3', 'seed-2'])
+    expect(changedSceneIds(before, after).sort()).toEqual(['seed-2', 'seed-3'])
+  })
+
+  it('leaves a removed scene out', () => {
+    const before = seedScenes()
+    // seed-1 goes; the two after it shift up a place.
+    expect(changedSceneIds(before, deleteScene(before, 'seed-1')).sort()).toEqual([
+      'seed-2',
+      'seed-3',
+    ])
+  })
+})
+
+describe('sameScene', () => {
+  it('compares by value, not identity', () => {
+    const [scene] = seedScenes()
+    expect(sameScene(scene, { ...scene })).toBe(true)
+    expect(sameScene(scene, { ...scene, title: 'Other' })).toBe(false)
+  })
+
+  it('treats a missing scene as equal only to another missing one', () => {
+    const [scene] = seedScenes()
+    expect(sameScene(undefined, undefined)).toBe(true)
+    expect(sameScene(scene, undefined)).toBe(false)
+  })
+})
+
+describe('applyStoredScenes', () => {
+  it('swaps a stored copy in place, appends a new one and drops a gone one', () => {
+    const base = seedScenes()
+    const renamed = { ...base[1], title: 'From the other tab' }
+    const added = createScene({ id: 'new', order: 2 })
+
+    const next = applyStoredScenes(
+      base,
+      new Map([
+        ['seed-1', undefined],
+        ['seed-2', renamed],
+        ['new', added],
+      ]),
+    )
+
+    expect(next.map((s) => s.id)).toEqual(['seed-2', 'seed-3', 'new'])
+    expect(next[0]).toBe(renamed)
+    expect(next[1]).toBe(base[2])
   })
 })
