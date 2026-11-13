@@ -1,6 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { instrument, type BoxPlacement } from './document'
+import { Pause, Play } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
+import { translateHandle, type BoxGeometry, type BoxPlacement } from './document'
+import {
+  BRIDGE_CHANNEL,
+  isBridgeMessage,
+  layoutOf,
+  renderStage,
+  replayableKey,
+  type BridgeRect,
+  type StageLayout,
+  type StageRequest,
+} from './stageBridge'
 import type { Tool } from './Toolbar'
 
 interface SceneStageProps {
@@ -11,6 +23,11 @@ interface SceneStageProps {
   onCreateBox: (placement: BoxPlacement) => void
   onSelectBox: (handle: string) => void
   onAttachJs: (handle: string) => void
+  /**
+   * A box was dragged (Select tool) — moved, or resized by a handle. `from`
+   * and `to` are its rendered rect before and after, canvas-relative.
+   */
+  onMoveResizeBox: (handle: string, from: BoxGeometry, to: BoxGeometry) => void
 }
 
 interface DragState {
@@ -22,22 +39,77 @@ interface DragState {
 
 const CLICK_THRESHOLD = 4 // px of travel below which a drag counts as a click
 
-/** Canvas bounding box in page coordinates, read from the live iframe doc. */
-function canvasPageRect(iframe: HTMLIFrameElement | null): DOMRect | null {
-  const canvas = iframe?.contentDocument?.querySelector('.canvas')
-  if (!canvas) return null
-  const c = canvas.getBoundingClientRect()
-  const f = iframe!.getBoundingClientRect()
-  return new DOMRect(f.left + c.left, f.top + c.top, c.width, c.height)
+/** What part of the selected box a drag grabbed: its body, or an edge/corner. */
+type GrabMode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+const GEOMETRY = ['left', 'top', 'width', 'height'] as const
+
+const RESIZE_HANDLES: { mode: GrabMode; className: string }[] = [
+  { mode: 'nw', className: '-top-1.5 -left-1.5 cursor-nwse-resize' },
+  { mode: 'n', className: '-top-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+  { mode: 'ne', className: '-top-1.5 -right-1.5 cursor-nesw-resize' },
+  { mode: 'e', className: 'top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'se', className: '-right-1.5 -bottom-1.5 cursor-nwse-resize' },
+  { mode: 's', className: '-bottom-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+  { mode: 'sw', className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
+  { mode: 'w', className: 'top-1/2 -left-1.5 -translate-y-1/2 cursor-ew-resize' },
+]
+
+interface BoxDrag {
+  /** The box's handle in the render on screen. */
+  handle: string
+  mode: GrabMode
+  /** The box's rect when the drag started, iframe-relative. */
+  rect: BridgeRect
+  startX: number
+  startY: number
+  x: number
+  y: number
 }
 
 /**
- * The rendered scene: an isolated iframe of the instrumented source (its
- * `console.log` reaches the real devtools — no in-app console). The source in
- * the iframe carries transient `data-bc` handles for hit-testing; the authored
- * document never does. Clicks are turned into placements (Box tool), a box
- * selection (Select tool), or a JS attach (JS tool). The selection outline is
- * drawn on an overlay layer, never injected into the source.
+ * The rect a drag has produced so far: the body moves the whole box, an edge
+ * or corner moves just its sides. A side can't be dragged past the opposite
+ * one — the box bottoms out at 1px rather than turning inside out.
+ */
+function draggedRect({ rect, mode, startX, startY, x, y }: BoxDrag): BridgeRect {
+  const dx = x - startX
+  const dy = y - startY
+  if (mode === 'move') return { ...rect, left: rect.left + dx, top: rect.top + dy }
+  let { left, top, width, height } = rect
+  if (mode.includes('e')) width = Math.max(1, width + dx)
+  if (mode.includes('s')) height = Math.max(1, height + dy)
+  if (mode.includes('w')) {
+    width = Math.max(1, rect.width - dx)
+    left = rect.left + rect.width - width
+  }
+  if (mode.includes('n')) {
+    height = Math.max(1, rect.height - dy)
+    top = rect.top + rect.height - height
+  }
+  return { left, top, width, height }
+}
+
+/**
+ * The rendered scene: a sandboxed iframe of the instrumented source (its
+ * `console.log` reaches the real devtools — no in-app console). `allow-scripts`
+ * without `allow-same-origin` runs the scene in an opaque origin, so its code
+ * can't reach the app's storage or DOM — and the stage can't reach into it
+ * either. Everything the stage knows about the render (canvas and box rects,
+ * clicks by `data-bc` handle, key presses) arrives through the bridge script
+ * injected into the render-only copy (see stageBridge.ts). Clicks are turned
+ * into placements (Box tool), a box selection (Select tool), or a JS attach
+ * (JS tool). The selection outline is drawn on an overlay layer, never
+ * injected into the source.
+ *
+ * With the Select tool, the selected box's outline doubles as a drag frame:
+ * dragging its body moves the box, its handles resize it. Feedback is the
+ * outline alone; the box's rule is rewritten once, on drop.
+ *
+ * Scripts run with every loop guarded (see loopGuard.ts). While a script
+ * doesn't parse — usually because it is half-typed — the stage keeps showing
+ * the last render that did, with a quiet notice; and scripts can be paused
+ * outright from the stage corner.
  */
 export function SceneStage({
   source,
@@ -46,15 +118,55 @@ export function SceneStage({
   onCreateBox,
   onSelectBox,
   onAttachJs,
+  onMoveResizeBox,
 }: SceneStageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
-  const [outline, setOutline] = useState<DOMRect | null>(null)
+  const [boxDrag, setBoxDrag] = useState<BoxDrag | null>(null)
+  /** The latest geometry the bridge reported, in iframe coordinates. */
+  const [layout, setLayout] = useState<StageLayout | null>(null)
+  const [scriptsPaused, setScriptsPaused] = useState(false)
+
+  // What to render. A source whose scripts don't parse is not rendered: the
+  // last good render stays up, remembered along with the source it came from.
+  const render = useMemo(
+    () => renderStage(source, { pauseScripts: scriptsPaused }),
+    [source, scriptsPaused],
+  )
+  const [lastGood, setLastGood] = useState(() => {
+    // Broken from the start: show the scene with its scripts held back.
+    const first = render.ok ? render : renderStage(source, { pauseScripts: true })
+    return { source, html: first.ok ? first.html : '' }
+  })
+  if (render.ok && render.html !== lastGood.html) {
+    setLastGood({ source, html: render.html })
+  }
+  const shown = render.ok ? { source, html: render.html } : lastGood
+  const scriptBroken = !render.ok
+
+  // The render on screen may be of an older source, and handles are
+  // positional — so they are translated between the two at this boundary.
+  const toShown = (handle: string | null) =>
+    handle && translateHandle(source, shown.source, handle)
+  const fromShown = (handle: string) => translateHandle(shown.source, source, handle)
+
+  // The render a stopped loop was reported for; the notice goes with it.
+  const [loopStoppedIn, setLoopStoppedIn] = useState<string | null>(null)
+  const loopStopped = loopStoppedIn === shown.html
+
+  /** Canvas bounding box in page coordinates, from the bridged layout. */
+  function canvasPageRect(): DOMRect | null {
+    const canvas = layout?.canvas
+    const iframe = iframeRef.current
+    if (!canvas || !iframe) return null
+    const f = iframe.getBoundingClientRect()
+    return new DOMRect(f.left + canvas.left, f.top + canvas.top, canvas.width, canvas.height)
+  }
 
   // Box-tool marquee/click → canvas-relative placement.
   function onPointerDown(event: ReactPointerEvent) {
     if (tool !== 'box') return
-    const rect = canvasPageRect(iframeRef.current)
+    const rect = canvasPageRect()
     if (!rect) return
     // Only start inside the canvas — it is the sole drop target.
     if (
@@ -65,7 +177,7 @@ export function SceneStage({
     ) {
       return
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     setDrag({
       startX: event.clientX,
       startY: event.clientY,
@@ -81,7 +193,7 @@ export function SceneStage({
 
   function onPointerUp() {
     if (!drag) return
-    const rect = canvasPageRect(iframeRef.current)
+    const rect = canvasPageRect()
     setDrag(null)
     if (!rect) return
 
@@ -111,90 +223,192 @@ export function SceneStage({
     })
   }
 
-  // The Select and JS tools hit-test clicks inside the iframe via `data-bc`.
-  // The listener lives on the iframe document so the scene's own JS still runs.
-  const onSelectRef = useRef(onSelectBox)
-  const onAttachRef = useRef(onAttachJs)
-  const toolRef = useRef(tool)
-  onSelectRef.current = onSelectBox
-  onAttachRef.current = onAttachJs
-  toolRef.current = tool
+  // Everything from the scene arrives as a message. Only the stage's own
+  // iframe is listened to — any other window posting on the same channel is
+  // ignored. Rebound when the tool or handlers change, so a click is always
+  // read against the current tool.
+  const shownHtml = shown.html
+  useEffect(
+    function listenToBridge() {
+      function onMessage(event: MessageEvent) {
+        const frame = iframeRef.current?.contentWindow
+        if (!frame || event.source !== frame) return
+        const message: unknown = event.data
+        if (!isBridgeMessage(message)) return
 
-  // Measure the selected box and size the outline to it. Reads the iframe's
-  // *current* document each call — `srcDoc` reloads swap it out, so a captured
-  // reference would go stale. Coordinates are iframe-relative (the overlay layer
-  // is aligned to the iframe), so no offset subtraction is needed.
-  const selectedRef = useRef(selectedHandle)
-  selectedRef.current = selectedHandle
-  const measureOutline = useRef(() => {})
-  measureOutline.current = () => {
-    const doc = iframeRef.current?.contentDocument
-    const handle = selectedRef.current
-    const el = handle && doc?.querySelector(`[data-bc="${handle}"]`)
-    if (!el) {
-      setOutline(null)
-      return
-    }
-    const b = el.getBoundingClientRect()
-    setOutline(new DOMRect(b.left, b.top, b.width, b.height))
+        switch (message.type) {
+          case 'layout': {
+            const next = layoutOf(message)
+            if (next) setLayout(next)
+            break
+          }
+          case 'click': {
+            if (typeof message.handle !== 'string') return
+            const handle = fromShown(message.handle)
+            if (!handle) return
+            if (tool === 'js') onAttachJs(handle)
+            else if (tool === 'select') onSelectBox(handle)
+            break
+          }
+          case 'loop-stopped':
+            setLoopStoppedIn(shownHtml)
+            break
+          case 'keydown': {
+            // Focus is inside the iframe, so the app's window listeners never
+            // saw this key. Replaying it there keeps Esc and V/B/J working
+            // after the stage has been clicked. Only while the stage really
+            // holds focus, and only those keys: the scene's own scripts can
+            // post on this channel too, and must not be able to drive the
+            // rest of the app (N for a new scene, ⌥F to reformat, …).
+            if (document.activeElement !== iframeRef.current) return
+            const init = replayableKey(message)
+            if (init) window.dispatchEvent(new KeyboardEvent('keydown', init))
+            break
+          }
+        }
+      }
+      window.addEventListener('message', onMessage)
+      return function unlisten() {
+        window.removeEventListener('message', onMessage)
+      }
+    },
+    // fromShown is rebuilt every render from the two sources listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tool, onSelectBox, onAttachJs, source, shown.source, shownHtml],
+  )
+
+  // Ask the scene to re-measure when the selection or tool changes — boxes may
+  // have moved since the last report (a scene can animate them). A fresh
+  // render reports on its own once it has loaded.
+  useEffect(
+    function requestMeasure() {
+      const request: StageRequest = { channel: BRIDGE_CHANNEL, type: 'measure' }
+      // The sandboxed frame has an opaque origin, so there is no origin to name.
+      iframeRef.current?.contentWindow?.postMessage(request, '*')
+    },
+    [selectedHandle, tool, shownHtml],
+  )
+
+  // Coordinates are iframe-relative and the overlay layer is aligned to the
+  // iframe, so a reported rect is used as is. Mid-drag, the outline follows
+  // the pointer instead; the source is only rewritten on drop.
+  const shownSelected = toShown(selectedHandle)
+  const measured = shownSelected ? layout?.boxes[shownSelected] : undefined
+  const outline = boxDrag ? draggedRect(boxDrag) : measured
+  const canDragBox = tool === 'select' && !!shownSelected && !!measured
+
+  // Select-tool drags on the selected box: its body moves it, the handles
+  // resize it. The pointer is captured, so moves and the drop arrive here
+  // even once it has left the frame.
+  function onBoxPointerDown(mode: GrabMode, event: ReactPointerEvent) {
+    if (!canDragBox) return
+    event.stopPropagation()
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setBoxDrag({
+      handle: shownSelected,
+      mode,
+      rect: measured,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+    })
   }
 
-  useEffect(function bindIframe() {
-    const iframe = iframeRef.current
-    if (!iframe) return
+  function onBoxPointerMove(event: ReactPointerEvent) {
+    if (!boxDrag) return
+    setBoxDrag({ ...boxDrag, x: event.clientX, y: event.clientY })
+  }
 
-    function onLoad() {
-      const doc = iframe!.contentDocument
-      if (doc) {
-        doc.addEventListener('click', function hitTest(event) {
-          const tool = toolRef.current
-          if (tool !== 'select' && tool !== 'js') return
-          const target = event.target as Element | null
-          const handle = target?.closest('[data-bc]')?.getAttribute('data-bc')
-          if (!handle) return
-          if (tool === 'js') onAttachRef.current(handle)
-          else onSelectRef.current(handle)
-        })
-      }
-      measureOutline.current() // re-align once the new render has painted
-    }
-
-    iframe.addEventListener('load', onLoad)
-    return function unbind() {
-      iframe.removeEventListener('load', onLoad)
-    }
-  }, [])
-
-  // Re-align the outline when the selection or source changes.
-  useLayoutEffect(
-    function positionOutline() {
-      measureOutline.current()
-      const id = window.setTimeout(() => measureOutline.current(), 60)
-      return () => window.clearTimeout(id)
-    },
-    [selectedHandle, source],
-  )
+  function onBoxPointerUp() {
+    if (!boxDrag) return
+    setBoxDrag(null)
+    const to = draggedRect(boxDrag)
+    const from = boxDrag.rect
+    if (GEOMETRY.every((prop) => Math.round(to[prop] - from[prop]) === 0)) return
+    const handle = fromShown(boxDrag.handle)
+    if (!handle) return
+    // Canvas-relative, the frame the box's left/top are written in.
+    const origin = layout?.canvas ?? { left: 0, top: 0 }
+    const relative = (r: BridgeRect) => ({ ...r, left: r.left - origin.left, top: r.top - origin.top })
+    onMoveResizeBox(handle, relative(from), relative(to))
+  }
 
   return (
     <div className="bg-muted/30 relative h-full w-full">
       <iframe
         ref={iframeRef}
         title="Scene preview"
-        srcDoc={instrument(source)}
+        sandbox="allow-scripts"
+        srcDoc={shown.html}
         className="h-full w-full border-0"
       />
+
+      {/* Above the Box tool's overlay, so it stays clickable with any tool. */}
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+        {(scriptBroken || loopStopped) && (
+          <p
+            role="status"
+            className="bg-popover/90 text-muted-foreground shadow-raised rounded-md border px-2 py-1 text-xs"
+          >
+            {scriptBroken
+              ? 'Script has errors — showing the last render that ran'
+              : 'A loop ran too long and was stopped — see the console'}
+          </p>
+        )}
+        <WithTooltip
+          side="left"
+          tip={
+            scriptsPaused
+              ? "Run the scene's scripts again"
+              : "Render the scene without running its scripts"
+          }
+        >
+          <button
+            type="button"
+            aria-label={scriptsPaused ? 'Resume scripts' : 'Pause scripts'}
+            aria-pressed={scriptsPaused}
+            onClick={() => setScriptsPaused((paused) => !paused)}
+            className="bg-popover shadow-raised text-muted-foreground hover:text-foreground flex size-8 items-center justify-center rounded-lg border transition-colors"
+          >
+            {scriptsPaused ? <Play className="size-4" /> : <Pause className="size-4" />}
+          </button>
+        </WithTooltip>
+      </div>
 
       {outline && (
         <div
           data-testid="selection-outline"
-          className="ring-primary pointer-events-none absolute z-10 ring-2"
+          className={
+            'ring-primary absolute z-10 ring-2 ' +
+            // With the Select tool the outline is the drag frame; otherwise
+            // clicks pass through it to the scene.
+            (canDragBox ? 'cursor-move touch-none' : 'pointer-events-none')
+          }
           style={{
             left: outline.left,
             top: outline.top,
             width: outline.width,
             height: outline.height,
           }}
-        />
+          onPointerDown={(event) => onBoxPointerDown('move', event)}
+          onPointerMove={onBoxPointerMove}
+          onPointerUp={onBoxPointerUp}
+          onPointerCancel={() => setBoxDrag(null)}
+        >
+          {canDragBox &&
+            RESIZE_HANDLES.map(({ mode, className }) => (
+              <div
+                key={mode}
+                data-testid={`resize-${mode}`}
+                className={
+                  'bg-background border-primary absolute size-3 rounded-sm border ' + className
+                }
+                onPointerDown={(event) => onBoxPointerDown(mode, event)}
+              />
+            ))}
+        </div>
       )}
 
       {tool === 'box' && (
