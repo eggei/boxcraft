@@ -87,6 +87,31 @@ export function layoutOf(message: BridgeMessage): StageLayout | null {
   return { canvas, boxes: clean };
 }
 
+/** The only keys a stage key press may be replayed as: its tools, and Esc. */
+const REPLAYABLE_KEYS = new Set(["v", "b", "j", "escape"])
+
+/**
+ * The key event a `keydown` message may be replayed as on the app's window, or
+ * null when it must be dropped. The scene's own scripts share the iframe with
+ * the bridge and can post fake key presses, so only the stage's own shortcuts
+ * get through, and never with ⌘, Ctrl or Alt — nothing a scene can trigger
+ * this way goes beyond switching tools or leaving the editor.
+ */
+export function replayableKey(message: BridgeMessage): KeyboardEventInit | null {
+  if (message.type !== "keydown") return null
+  const { key, code, altKey, ctrlKey, metaKey, shiftKey, repeat } = message as Partial<BridgeKey>
+  if (typeof key !== "string" || !REPLAYABLE_KEYS.has(key.toLowerCase())) return null
+  if (altKey || ctrlKey || metaKey) return null
+  return {
+    key,
+    code: typeof code === "string" ? code : "",
+    shiftKey: !!shiftKey,
+    repeat: !!repeat,
+    bubbles: true,
+    cancelable: true,
+  }
+}
+
 /**
  * The script that runs inside the scene. Written as a real function so it is
  * type-checked and unit-testable, then shipped as its own source text — so it
