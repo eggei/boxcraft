@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { closeDB } from "@/persistence/idb";
 
 // jsdom does no layout, and its Range has no geometry methods at all. CodeMirror
 // measures text through Range#getClientRects — and re-measures from an animation
@@ -20,6 +21,9 @@ if (typeof Range !== "undefined") {
 // each one starts clean.
 afterEach(() => {
   cleanup();
+  // The app keeps one connection open for good; drop it along with the
+  // database so the next test opens against its fresh factory.
+  closeDB();
   globalThis.indexedDB = new IDBFactory();
   localStorage.clear();
   document.documentElement.classList.remove("dark");
