@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Copy, Archive, Trash2 } from 'lucide-react'
 import { WithTooltip } from '@/components/ui/tooltip'
 import { activeScenes, CANVAS_SIZE, type Scene } from './sceneList'
-import { ScenePreview } from './ScenePreview'
+import { ScenePreview, type PreviewMode } from './ScenePreview'
 
 /**
  * Air between one scene's canvas and the next. It holds the centered card's
@@ -176,12 +176,13 @@ export function SceneFeed({
                 style={{ width: CANVAS_SIZE, height: CANVAS_SIZE }}
                 className="focus-visible:ring-ring max-w-full shrink-0 cursor-pointer rounded-lg outline-none focus-visible:ring-2"
               >
-                {/* Only the centered scene runs. A tip is a static stand-in, so
-                    scrolling never spins up an iframe for a neighbour. */}
+                {/* Only the centered scene runs. The tips on either side show
+                    their artwork with scripts off, and cards further out are
+                    off screen, so they get no frame at all. */}
                 <ScenePreview
                   source={scene.source}
                   title={scene.title}
-                  live={isCurrent}
+                  mode={previewMode(index, currentIndex)}
                 />
               </motion.button>
             </section>
@@ -209,6 +210,18 @@ export function SceneFeed({
       />
     </div>
   )
+}
+
+/**
+ * The centered card runs; its immediate neighbors, the tips on screen, render a
+ * script-free still; anything further away is a placeholder. A card more than
+ * one pitch from the middle sits past the tips, beyond the screen edge.
+ */
+function previewMode(index: number, currentIndex: number): PreviewMode {
+  const distance = Math.abs(index - currentIndex)
+  if (distance === 0) return 'live'
+  if (distance === 1) return 'still'
+  return 'placeholder'
 }
 
 /**
