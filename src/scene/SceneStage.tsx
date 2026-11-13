@@ -8,6 +8,7 @@ import {
   isBridgeMessage,
   layoutOf,
   renderStage,
+  replayableKey,
   type StageLayout,
   type StageRequest,
 } from './stageBridge'
@@ -189,24 +190,18 @@ export function SceneStage({
           case 'loop-stopped':
             setLoopStoppedIn(shownHtml)
             break
-          case 'keydown':
+          case 'keydown': {
             // Focus is inside the iframe, so the app's window listeners never
-            // saw this key. Replaying it there keeps Esc, V/B/J, N and the
-            // rest working after the stage has been clicked.
-            window.dispatchEvent(
-              new KeyboardEvent('keydown', {
-                key: String(message.key),
-                code: String(message.code),
-                altKey: !!message.altKey,
-                ctrlKey: !!message.ctrlKey,
-                metaKey: !!message.metaKey,
-                shiftKey: !!message.shiftKey,
-                repeat: !!message.repeat,
-                bubbles: true,
-                cancelable: true,
-              }),
-            )
+            // saw this key. Replaying it there keeps Esc and V/B/J working
+            // after the stage has been clicked. Only while the stage really
+            // holds focus, and only those keys: the scene's own scripts can
+            // post on this channel too, and must not be able to drive the
+            // rest of the app (N for a new scene, ⌥F to reformat, …).
+            if (document.activeElement !== iframeRef.current) return
+            const init = replayableKey(message)
+            if (init) window.dispatchEvent(new KeyboardEvent('keydown', init))
             break
+          }
         }
       }
       window.addEventListener('message', onMessage)
