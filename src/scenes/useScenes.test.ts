@@ -154,3 +154,82 @@ describe('useScenes autosave', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('useScenes storage status', () => {
+  function stubPersist() {
+    const persist = vi.fn(() => Promise.resolve(true))
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: { persist } })
+    return persist
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    Reflect.deleteProperty(navigator, 'storage')
+  })
+
+  it('reports an error instead of loading forever when storage is blocked', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(indexedDB, 'open').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError')
+    })
+    const persist = stubPersist()
+
+    const { result } = renderHook(() => useScenes())
+
+    await waitFor(() => expect(result.current.status).toBe('error'))
+    expect(result.current.scenes).toEqual([])
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('keeps the seeds in memory when only their first write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const quota = new DOMException('Quota exceeded', 'QuotaExceededError')
+    // Every seed is written at once, so each one needs its own failure.
+    for (let i = 0; i < 3; i++) save.mockRejectedValueOnce(quota)
+
+    const { result } = renderHook(() => useScenes())
+
+    await waitFor(() => expect(result.current.status).toBe('error'))
+    expect(result.current.scenes.length).toBeGreaterThan(0)
+  })
+
+  it('asks the browser to keep storage persistent once the library is restored', async () => {
+    const persist = stubPersist()
+
+    const { result } = renderHook(() => useScenes())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    expect(persist).toHaveBeenCalledTimes(1)
+  })
+
+  it('goes saving → saved around a write', async () => {
+    const { result } = await renderReady()
+    expect(result.current.saveState).toBe('saved')
+
+    act(() => result.current.renameScene('seed-1', 'Saving'))
+    let flushed: Promise<void> = Promise.resolve()
+    act(() => {
+      flushed = result.current.flush()
+    })
+    expect(result.current.saveState).toBe('saving')
+
+    await act(() => flushed)
+    expect(result.current.saveState).toBe('saved')
+  })
+
+  it('reports a failed save, and recovers once a later save gets through', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = await renderReady()
+    save.mockRejectedValueOnce(new DOMException('Quota exceeded', 'QuotaExceededError'))
+
+    act(() => result.current.renameScene('seed-1', 'Lost?'))
+    await act(() => result.current.flush())
+    expect(result.current.saveState).toBe('error')
+
+    // The failed scene stayed dirty, so the next flush retries it.
+    act(() => result.current.renameScene('seed-2', 'Next edit'))
+    await act(() => result.current.flush())
+    expect(result.current.saveState).toBe('saved')
+    expect((await getScene('seed-1'))?.title).toBe('Lost?')
+  })
+})

@@ -28,7 +28,15 @@ import {
   type Scene,
 } from './sceneList'
 
-type Status = 'loading' | 'ready'
+/** Whether the library could be read at all; `error` means storage is out. */
+type Status = 'loading' | 'ready' | 'error'
+
+/**
+ * How the most recent writes went: `saving` while any is in flight, then
+ * `saved` — or `error` if the last one to settle failed, until a later write
+ * gets through.
+ */
+export type SaveState = 'saved' | 'saving' | 'error'
 
 /**
  * How long autosave waits after the last change before writing. Typing in the
@@ -62,6 +70,7 @@ export function useScenes() {
   const [status, setStatus] = useState<Status>('loading')
   /** Ids of scenes another tab changed while this one had unsaved edits. */
   const [conflicts, setConflicts] = useState<string[]>([])
+  const [saveState, setSaveState] = useState<SaveState>('saved')
 
   /** The list as last committed — what a flush outside a render writes from. */
   const committed = useRef<Scene[]>(scenes)
@@ -71,6 +80,8 @@ export function useScenes() {
   const conflicted = useRef(new Set<string>())
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const channel = useRef<SceneChannel | null>(null)
+  /** Writes still in flight, for `saveState`. */
+  const writes = useRef(0)
 
   const announce = useCallback((change: SceneChange) => {
     if (change.ids.length > 0 || change.type === 'replace') {
@@ -78,24 +89,56 @@ export function useScenes() {
     }
   }, [])
 
+  /** Run a write while keeping `saveState` in step with it. */
+  const track = useCallback(async <T,>(write: Promise<T>): Promise<T> => {
+    writes.current += 1
+    setSaveState('saving')
+    try {
+      const result = await write
+      writes.current -= 1
+      if (writes.current === 0) setSaveState('saved')
+      return result
+    } catch (error) {
+      writes.current -= 1
+      setSaveState('error')
+      throw error
+    }
+  }, [])
+
   useEffect(function restoreScenes() {
     let active = true
     async function run() {
-      let all = await getAllScenes()
-      if (all.length === 0) {
-        all = seedScenes()
-        await Promise.all(all.map(saveScene))
-      } else {
-        // Migrate records saved before Phase 4 added order/archivedAt.
-        all = all.map((scene, index) => ({
-          ...scene,
-          order: scene.order ?? index,
-          archivedAt: scene.archivedAt ?? null,
-        }))
+      let all: Scene[] = []
+      try {
+        all = await getAllScenes()
+        if (all.length === 0) {
+          all = seedScenes()
+          await Promise.all(all.map(saveScene))
+        } else {
+          // Migrate records saved before Phase 4 added order/archivedAt.
+          all = all.map((scene, index) => ({
+            ...scene,
+            order: scene.order ?? index,
+            archivedAt: scene.archivedAt ?? null,
+          }))
+        }
+      } catch (error) {
+        // Storage is blocked or broken (private mode, disabled site data, a
+        // full disk…). Say so instead of loading forever, and keep whatever
+        // did make it into memory — the seeds, if only their write failed — so
+        // it can still be exported.
+        console.error('Restoring scenes failed', error)
+        if (!active) return
+        setScenes(all)
+        setStatus('error')
+        return
       }
       if (!active) return
       setScenes(all)
       setStatus('ready')
+      // Ask the browser not to evict the library under storage pressure. It
+      // may say no (or ask the person); either way there is nothing to do.
+      void navigator.storage?.persist?.().catch(() => {})
     }
     void run()
     return function cancel() {
@@ -123,7 +166,7 @@ export function useScenes() {
     const saved: string[] = []
     await Promise.all(
       pending.map((scene) =>
-        saveScene(scene).then(
+        track(saveScene(scene)).then(
           () => saved.push(scene.id),
           (error: unknown) => {
             dirty.current.add(scene.id)
@@ -133,7 +176,7 @@ export function useScenes() {
       ),
     )
     announce({ type: 'save', ids: saved })
-  }, [announce])
+  }, [announce, track])
 
   useEffect(
     function scheduleAutosave() {
@@ -302,14 +345,14 @@ export function useScenes() {
       dirty.current.delete(id)
       if (conflicted.current.delete(id)) setConflicts([...conflicted.current])
       mutate((current) => deleteOp(current, id))
-      void removeScene(id).then(
+      void track(removeScene(id)).then(
         () => announce({ type: 'delete', ids: [id] }),
         (error: unknown) => {
           console.error('Deleting the scene failed', error)
         },
       )
     },
-    [mutate, announce],
+    [mutate, announce, track],
   )
 
   /** Undo a delete: the caller hands back the scene it was holding on to. */
@@ -355,7 +398,7 @@ export function useScenes() {
     async (incoming: Scene[], mode: ImportMode): Promise<Scene[]> => {
       await flush()
       const next = importScenes(scenes, incoming, { mode, newId })
-      await replaceAllScenes(next)
+      await track(replaceAllScenes(next))
       dirty.current.clear()
       // The import settled every scene, conflicted ones included.
       conflicted.current.clear()
@@ -364,12 +407,13 @@ export function useScenes() {
       announce({ type: 'replace', ids: next.map((scene) => scene.id) })
       return next
     },
-    [scenes, flush, announce],
+    [scenes, flush, announce, track],
   )
 
   return {
     scenes,
     status,
+    saveState,
     conflicts,
     resolveConflict,
     flush,
