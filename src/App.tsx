@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Link,
   Navigate,
@@ -14,14 +14,23 @@ import { useScenes } from "@/scenes/useScenes";
 import { SceneFeed } from "@/scenes/SceneFeed";
 import { FilesView } from "@/scenes/FilesView";
 import { ArchivedView } from "@/scenes/ArchivedView";
-import { SceneEditorPane } from "@/scene/SceneEditorPane";
+import { SceneConflictBanner } from "@/scenes/SceneConflictBanner";
+import { SaveIndicator, StorageUnavailable } from "@/scenes/StorageStatus";
 import { activeScenes, type Scene } from "@/scenes/sceneList";
 import { editPath, feedPath, pageForPath, ROUTES } from "@/scenes/navigation";
 import { useTheme } from "@/theme/useTheme";
 import { WithTooltip } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LibraryControls } from "@/library/LibraryControls";
+import { SceneExportMenu } from "@/library/SceneExportMenu";
 import { type ImportMode } from "@/library/libraryFile";
+
+// The editor pulls in CodeMirror, which is most of the app's weight, so it
+// loads as its own chunk the first time a scene is opened for editing. The
+// feed, files and archive pages never pay for it.
+const SceneEditorPane = lazy(() =>
+  import("@/scene/SceneEditorPane").then((module) => ({ default: module.SceneEditorPane })),
+);
 
 /**
  * The shell: header chrome plus the routed pages. Where the app is — files,
@@ -32,6 +41,7 @@ function App() {
   const {
     scenes,
     status,
+    saveState,
     addScene,
     duplicateScene,
     archiveScene,
@@ -42,6 +52,8 @@ function App() {
     reorderScenes,
     updateSource,
     importLibrary,
+    conflicts,
+    resolveConflict,
   } = useScenes();
 
   const { theme, toggle: toggleTheme } = useTheme();
@@ -124,13 +136,19 @@ function App() {
   useEffect(
     function keyboardShortcuts() {
       function onKeyDown(event: KeyboardEvent) {
+        // Something closer to the key already acted on it — CodeMirror claims
+        // ⌘/Ctrl+Enter for a new line, for one — so the shell stays out of it.
+        if (event.defaultPrevented) return;
         const target = event.target as HTMLElement | null;
         const inField =
           target?.tagName === "INPUT" ||
           target?.tagName === "TEXTAREA" ||
           target?.isContentEditable;
 
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        // Start Editing is the feed's action: it opens the centered card. On
+        // any other page there is no centered card, and `feedSceneId` would
+        // fall back to the first scene — the editor would jump to it.
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && page === "feed") {
           event.preventDefault();
           startEditing();
           return;
@@ -178,6 +196,7 @@ function App() {
           />
         )}
         <div className="flex-1" />
+        {status === "ready" && <SaveIndicator state={saveState} />}
 
         <WithTooltip
           tip={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
@@ -193,6 +212,7 @@ function App() {
         </WithTooltip>
 
         {page !== "edit" && <LibraryControls scenes={scenes} onImport={handleImport} />}
+        {editing && <SceneExportMenu title={editing.title} source={editing.source} />}
 
         {page === "feed" && (
           <HeaderLink to={ROUTES.files} tip="Browse every scene as a grid">
@@ -246,6 +266,8 @@ function App() {
       <main className="min-h-0 flex-1">
         {status === "loading" ? (
           <p className="text-muted-foreground p-8 text-sm">Loading…</p>
+        ) : status === "error" ? (
+          <StorageUnavailable scenes={scenes} />
         ) : (
           <LayoutGroup>
             <motion.div
@@ -269,12 +291,16 @@ function App() {
                   path={ROUTES.editScene}
                   element={
                     editing ? (
-                      <SceneEditorPane
-                        key={editing.id}
-                        source={editing.source}
-                        onChange={(source) => updateSource(editing.id, source)}
-                        onExit={() => navigate(feedPath(editing.id))}
-                      />
+                      <Suspense
+                        fallback={<p className="text-muted-foreground p-8 text-sm">Loading…</p>}
+                      >
+                        <SceneEditorPane
+                          key={editing.id}
+                          source={editing.source}
+                          onChange={(source) => updateSource(editing.id, source)}
+                          onExit={() => navigate(feedPath(editing.id))}
+                        />
+                      </Suspense>
                     ) : (
                       // The URL names a scene that was archived or never existed.
                       <Navigate to={feedPath()} replace />
@@ -291,6 +317,8 @@ function App() {
           </LayoutGroup>
         )}
       </main>
+
+      <SceneConflictBanner scenes={scenes} conflicts={conflicts} onResolve={resolveConflict} />
 
       {pendingDelete && (
         <ConfirmDialog

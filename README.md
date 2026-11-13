@@ -16,7 +16,8 @@ writing boilerplate. Local-first, no accounts, no backend.
 
 ```bash
 npm install      # install dependencies
-npm run dev      # start the dev server (http://localhost:5174)
+npm run dev      # start the dev server (http://localhost:5173)
+npm run lint     # lint with oxlint
 npm test         # run the test suite once
 npm run build    # type-check + build the static bundle to dist/
 npm run preview  # preview the production build
@@ -114,13 +115,15 @@ editor knows a provider's name.
 ## Layout
 
 - `src/persistence/` — IndexedDB wrapper (`idb.ts`) and the scene store (`scenes.ts`)
-- `src/scene/` — the `useScene` hook (load + continuous autosave)
+- `src/scenes/` — the scene list and its operations (`sceneList.ts`), the
+  `useScenes` hook (load + continuous autosave), routes (`navigation.ts`) and the
+  feed, files and archive pages
+- `src/scene/` — the editor: the CodeMirror source pane, the live stage, the
+  scene document helpers (`document.ts`), formatting and Vim mode
 - `src/library/` — the export/import file format (`libraryFile.ts`) and its header controls
 - `src/ai/` — the AI editor: prompt/reply rules (`prompt.ts`), the API client
   (`agentClient.ts`), settings and URL rules (`aiSettings.ts`), usage accounting
   (`usage.ts`), the free-option walk-through (`presets.ts`), and the chat panel
   and setup dialog
+- `src/settings/`, `src/theme/` — editor settings and the light/dark theme, kept in `localStorage`
 - `src/components/ui/` — shadcn/ui components
-
-The build proceeds core-first through five phases; foundation (scaffold,
-tooling, persistence) is complete.

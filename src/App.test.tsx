@@ -7,6 +7,7 @@ import { getAllScenes, getScene } from "./persistence/scenes";
 import { SCENE_PITCH } from "./scenes/SceneFeed";
 import { LIBRARY_FORMAT, LIBRARY_VERSION } from "./library/libraryFile";
 import { EDITOR_SETTINGS_KEY } from "./settings/editorSettings";
+import { BRIDGE_CHANNEL } from "./scene/stageBridge";
 
 /**
  * The app reads its location from the router, so tests mount it behind an
@@ -243,6 +244,18 @@ describe("routes", () => {
   it("deep-links straight into the editor for one scene", async () => {
     renderApp("/edit/seed-2");
     expect(await screen.findByLabelText("Scene title")).toHaveValue("Gradient card");
+    // The editor arrives as its own chunk, after the header is already up.
+    await waitFor(() => expect(document.querySelector(".cm-content")).not.toBeNull());
+  });
+
+  it("offers the open scene's export from the editor header", async () => {
+    const user = userEvent.setup();
+    renderApp("/edit/seed-2");
+    await screen.findByLabelText("Scene title");
+
+    await user.click(screen.getByRole("button", { name: "Export scene" }));
+
+    expect(screen.getByRole("menuitem", { name: "Download .html" })).toBeInTheDocument();
   });
 
   it("falls back to the feed when the URL names a scene that is gone", async () => {
@@ -296,17 +309,79 @@ describe("routes", () => {
   });
 });
 
+describe("keyboard shortcuts", () => {
+  it("starts editing the centered feed card on ⌘/Ctrl+Enter", async () => {
+    renderApp("/feed/seed-2");
+    await screen.findAllByTestId("scene-card");
+
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+
+    expect(await screen.findByLabelText("Scene title")).toHaveValue("Gradient card");
+  });
+
+  it("stays on the scene being edited on ⌘/Ctrl+Enter — it doesn't jump to the first one", async () => {
+    renderApp("/edit/seed-2");
+    await screen.findByLabelText("Scene title");
+
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true });
+
+    expect(screen.getByLabelText("Scene title")).toHaveValue("Gradient card");
+  });
+
+  it("leaves a shortcut alone once something closer to the key has claimed it", async () => {
+    renderApp("/feed/seed-2");
+    await screen.findAllByTestId("scene-card");
+
+    const claimed = new KeyboardEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    claimed.preventDefault();
+    window.dispatchEvent(claimed);
+
+    expect(screen.queryByLabelText("Scene title")).not.toBeInTheDocument();
+  });
+
+  it("still leaves on Esc pressed with focus inside the stage", async () => {
+    renderApp("/edit/seed-1");
+    await screen.findByLabelText("Scene title");
+
+    // The sandboxed stage can only tell the app about a key press through its
+    // bridge — this is the message the bridge posts for Esc.
+    const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
+    iframe.focus();
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { channel: BRIDGE_CHANNEL, type: "keydown", key: "Escape", code: "Escape" },
+        source: iframe.contentWindow,
+      }),
+    );
+
+    expect(await screen.findAllByTestId("scene-card")).not.toHaveLength(0);
+    expect(screen.queryByLabelText("Scene title")).not.toBeInTheDocument();
+  });
+});
+
 describe("Vim mode in the editor", () => {
   const VIM_ON = JSON.stringify({ autoFormat: false, editorSide: "left", vimMode: true });
 
   /** The editor's content element — where a key press inside the code lands. */
   const codeEditor = () => document.querySelector(".cm-content") as HTMLElement;
 
+  /**
+   * The editor is a lazily loaded chunk, so the header can be up before the
+   * code is: wait for CodeMirror itself before pressing keys into it.
+   */
+  const editorLoaded = () => waitFor(() => expect(codeEditor()).not.toBeNull());
+
   it("keeps Esc for Vim while typing in the code, but Esc from anywhere else still leaves", async () => {
     localStorage.setItem(EDITOR_SETTINGS_KEY, VIM_ON);
     const user = userEvent.setup();
     renderApp("/edit/seed-1");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: "i" });
     fireEvent.keyDown(codeEditor(), { key: "Escape" });
@@ -323,7 +398,7 @@ describe("Vim mode in the editor", () => {
 
   it("still leaves on Esc from the code when Vim is off — nothing changes for everyone else", async () => {
     renderApp("/edit/seed-1");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: "Escape" });
 
@@ -333,7 +408,7 @@ describe("Vim mode in the editor", () => {
   it("leaves on :q, back to the scene in the feed", async () => {
     localStorage.setItem(EDITOR_SETTINGS_KEY, VIM_ON);
     renderApp("/edit/seed-2");
-    await screen.findByLabelText("Scene title");
+    await editorLoaded();
 
     fireEvent.keyDown(codeEditor(), { key: ":" });
     const input = document.querySelector<HTMLInputElement>(".cm-vim-panel input")!;

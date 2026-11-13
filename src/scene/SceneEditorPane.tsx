@@ -12,7 +12,24 @@ import { EditorSettingsMenu } from "./EditorSettingsMenu";
 import { SceneEditor, type SceneEditorHandle } from "./SceneEditor";
 import { SceneStage } from "./SceneStage";
 import { Toolbar, type Tool } from "./Toolbar";
-import { listBoxes, type BoxPlacement } from "./document";
+import { BoxRenameField } from "./BoxRenameField";
+import {
+  createBoxProblem,
+  listBoxes,
+  translateHandle,
+  type BoxGeometry,
+  type BoxPlacement,
+  type CreateBoxProblem,
+  type RenameProblem,
+} from "./document";
+import { usePreviewSource } from "./usePreviewSource";
+
+/** What the Box tool tells the person when the document has nowhere to draw. */
+const BOX_PROBLEM_NOTICE: Record<CreateBoxProblem, string> = {
+  "no-canvas": 'Add an element with class="canvas" to draw boxes',
+  "unterminated-canvas": "Close the canvas element's tag to draw boxes",
+  "no-style": "Add a <style> block to draw boxes",
+};
 
 /**
  * The L3 editing surface for a single scene: the CodeMirror source on one side
@@ -50,28 +67,81 @@ export function SceneEditorPane({
   });
   const aiChat = useAiChat({ editor: editorRef, settings: ai.settings, usage: aiUsage });
 
+  // The stage renders a copy of the source that trails typing by a moment (see
+  // usePreviewSource). Tool edits go through `asToolEdit`, which shows their
+  // result at once: the editor reports the new source synchronously from inside
+  // the call, and `handleChange` sees the flag while it is still up.
+  const [previewSource, showNow] = usePreviewSource(source);
+  const toolEditRef = useRef(false);
+
+  function handleChange(next: string) {
+    onChange(next);
+    if (toolEditRef.current) showNow(next);
+  }
+
+  function asToolEdit<T>(edit: () => T): T {
+    toolEditRef.current = true;
+    try {
+      return edit();
+    } finally {
+      toolEditRef.current = false;
+    }
+  }
+
+  // Handles are positional, so the stage's (from the rendered copy) and the
+  // editor's (from the live source) can disagree while the render lags. They
+  // are translated at the boundary, in both directions.
+  const fromStage = (handle: string) => translateHandle(previewSource, source, handle);
+  const stageSelectedHandle =
+    selectedHandle && translateHandle(source, previewSource, selectedHandle);
+
   function handleCreateBox(placement: BoxPlacement) {
-    editorRef.current?.createBox(placement);
+    const problem = asToolEdit(() => editorRef.current?.createBox(placement) ?? null);
+    // On failure the Box tool stays armed, so its notice stays up until the
+    // person fixes the document or picks another tool.
+    if (problem) return;
     setTool("select"); // tool reverts to Select after creation
   }
 
-  function handleSelectBox(handle: string) {
+  // Derived rather than stored: the notice goes away the moment the source
+  // gains a canvas (or a <style>), with nothing to reset.
+  const boxProblem = tool === "box" ? createBoxProblem(source) : null;
+
+  function selectBox(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.selectBox(handle);
+    asToolEdit(() => editorRef.current?.selectBox(handle));
   }
 
-  function handleAttachJs(handle: string) {
+  function attachJsTo(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.attachJs(handle);
+    asToolEdit(() => editorRef.current?.attachJs(handle));
     setTool("select"); // tool reverts to Select after attaching
   }
 
+  function handleStageSelect(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) selectBox(handle);
+  }
+
+  function handleStageAttachJs(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) attachJsTo(handle);
+  }
+
+  // A drag on the stage lands as one edit to the box's rule — and is shown at
+  // once, so the box doesn't snap back for the length of the debounce.
+  function handleMoveResizeBox(stageHandle: string, from: BoxGeometry, to: BoxGeometry) {
+    const handle = fromStage(stageHandle);
+    if (handle) asToolEdit(() => editorRef.current?.moveResizeBox(handle, from, to));
+  }
+
   function handleDetachJs() {
-    if (selectedHandle) editorRef.current?.detachJs(selectedHandle);
+    const handle = selectedHandle;
+    if (handle) asToolEdit(() => editorRef.current?.detachJs(handle));
   }
 
   function handleFormat() {
-    editorRef.current?.format();
+    asToolEdit(() => editorRef.current?.format());
   }
 
   // ⌥F formats from anywhere on the editing surface, including from inside the
@@ -86,7 +156,7 @@ export function SceneEditorPane({
       if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
       // Cancels the "ƒ" the editor would otherwise be handed.
       event.preventDefault();
-      editorRef.current?.format();
+      asToolEdit(() => editorRef.current?.format());
     }
     window.addEventListener("keydown", onKeyDown);
     return function unbind() {
@@ -94,18 +164,24 @@ export function SceneEditorPane({
     };
   }, []);
 
-  function handleRename() {
-    if (!selectedHandle) return;
-    const box = listBoxes(source).find((b) => b.handle === selectedHandle);
-    if (!box) return;
-    const next = window.prompt("Rename box", box.className)?.trim();
-    if (!next || next === box.className) return;
-    editorRef.current?.renameBox(selectedHandle, next);
-  }
-
   const selectedBox = selectedHandle
     ? listBoxes(source).find((b) => b.handle === selectedHandle)
     : undefined;
+
+  // Which box the inline rename field is open for. Tied to a handle, so picking
+  // another box quietly closes it rather than renaming the wrong one.
+  const [renamingHandle, setRenamingHandle] = useState<string | null>(null);
+  const renaming = !!selectedBox && renamingHandle === selectedHandle;
+
+  function handleRenameSubmit(name: string): RenameProblem | null {
+    if (!selectedBox) return null;
+    const problem =
+      name.trim() === selectedBox.className
+        ? null // unchanged — just close
+        : asToolEdit(() => editorRef.current?.renameBox(selectedBox.handle, name) ?? null);
+    if (!problem) setRenamingHandle(null);
+    return problem;
+  }
   const selectedHasJs =
     !!selectedBox && source.includes(`getElementById('${selectedBox.className}')`);
 
@@ -123,7 +199,7 @@ export function SceneEditorPane({
           <SceneEditor
             ref={editorRef}
             value={source}
-            onChange={onChange}
+            onChange={handleChange}
             onCursorBox={setSelectedHandle}
             autoFormat={settings.autoFormat}
             vimMode={settings.vimMode}
@@ -185,27 +261,46 @@ export function SceneEditorPane({
       </div>
       <div className={cn("relative min-h-0", codeOnRight ? "order-1" : "order-2")}>
         <SceneStage
-          source={source}
+          source={previewSource}
           tool={tool}
-          selectedHandle={selectedHandle}
+          selectedHandle={stageSelectedHandle || null}
           onCreateBox={handleCreateBox}
-          onSelectBox={handleSelectBox}
-          onAttachJs={handleAttachJs}
+          onSelectBox={handleStageSelect}
+          onAttachJs={handleStageAttachJs}
+          onMoveResizeBox={handleMoveResizeBox}
         />
+        {boxProblem && (
+          <div
+            role="status"
+            className="bg-popover shadow-raised absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-lg border px-3 py-2 text-sm"
+          >
+            {BOX_PROBLEM_NOTICE[boxProblem]}
+          </div>
+        )}
         {selectedBox && (
-          <div className="bg-popover shadow-raised absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
-            <span className="text-muted-foreground">
-              <code>.{selectedBox.className}</code>
-            </span>
-            <WithTooltip tip="Give this box a different class name">
-              <button
-                type="button"
-                onClick={handleRename}
-                className="hover:bg-muted rounded-md border px-2 py-1"
-              >
-                Rename
-              </button>
-            </WithTooltip>
+          <div className="bg-popover shadow-raised absolute bottom-3 left-3 z-10 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm">
+            {renaming ? (
+              <BoxRenameField
+                initialName={selectedBox.className}
+                onSubmit={handleRenameSubmit}
+                onCancel={() => setRenamingHandle(null)}
+              />
+            ) : (
+              <>
+                <span className="text-muted-foreground self-center">
+                  <code>.{selectedBox.className}</code>
+                </span>
+                <WithTooltip tip="Give this box a different class name">
+                  <button
+                    type="button"
+                    onClick={() => setRenamingHandle(selectedBox.handle)}
+                    className="hover:bg-muted rounded-md border px-2 py-1"
+                  >
+                    Rename
+                  </button>
+                </WithTooltip>
+              </>
+            )}
             <WithTooltip
               tip={
                 selectedHasJs
@@ -215,7 +310,7 @@ export function SceneEditorPane({
             >
               <button
                 type="button"
-                onClick={selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)}
+                onClick={selectedHasJs ? handleDetachJs : () => attachJsTo(selectedHandle!)}
                 className="hover:bg-muted rounded-md border px-2 py-1"
               >
                 {selectedHasJs ? "Detach JS" : "Attach JS"}

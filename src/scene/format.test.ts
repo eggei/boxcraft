@@ -29,7 +29,9 @@ describe('formatSource', () => {
   })
 
   it('changes only whitespace, never the rendered document', () => {
-    const messy = flatten(createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 }).source)
+    const created = createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
+    if (!created.ok) throw new Error(created.problem)
+    const messy = flatten(created.source)
     const parse = (s: string) =>
       new DOMParser().parseFromString(s, 'text/html').body.innerHTML.replace(/\s+/g, ' ')
 
@@ -52,7 +54,9 @@ describe('formatSource', () => {
     // indented against nothing — differently from one run to the next.
     let long = DEFAULT_SOURCE
     for (let i = 0; i < 60; i++) {
-      long = createBox(long, { kind: 'point', x: i * 3, y: i * 3 }).source
+      const result = createBox(long, { kind: 'point', x: i * 3, y: i * 3 })
+      if (!result.ok) throw new Error(result.problem)
+      long = result.source
     }
     expect(long.length).toBeGreaterThan(10_000)
     const settled = formatSource(long)

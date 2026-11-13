@@ -12,7 +12,9 @@ import {
   validateEdit,
 } from "./prompt";
 
-const WITH_BOX = createBox(DEFAULT_SOURCE, { kind: "point", x: 10, y: 10 }).source;
+const created = createBox(DEFAULT_SOURCE, { kind: "point", x: 10, y: 10 });
+if (!created.ok) throw new Error(created.problem);
+const WITH_BOX = created.source;
 
 describe("buildMessages", () => {
   it("sends the system prompt first and the current document with the request last", () => {

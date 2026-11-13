@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SceneFeed } from './SceneFeed'
 import { CANVAS_SIZE, type Scene } from './sceneList'
@@ -49,12 +50,39 @@ describe('SceneFeed', () => {
     expect(next.style.transform).toMatch(/^scale\(0\.\d+\)$/)
   })
 
-  it('runs only the centered scene — a tip is static, never an iframe', () => {
-    const { container } = render(<SceneFeed scenes={SCENES} {...feedProps()} />)
+  it('runs only the centered scene, shows its neighbors script-free and skips the rest', () => {
+    const scenes: Scene[] = [
+      ...SCENES,
+      { id: 'c', title: 'Far', source: '<html>c</html>', order: 2, archivedAt: null },
+    ]
+    const { container } = render(<SceneFeed scenes={scenes} {...feedProps()} />)
 
     const frames = Array.from(container.querySelectorAll('iframe'))
-    expect(frames.map((frame) => frame.title)).toEqual(['Glow'])
-    expect(screen.getByLabelText('Card (preview)')).toBeInTheDocument()
+    expect(frames.map((frame) => frame.title)).toEqual(['Glow', 'Card (still)'])
+    // The one running scene still can't reach the app: scripts yes, origin no.
+    expect(frames[0]).toHaveAttribute('sandbox', 'allow-scripts')
+    // The neighbor shows its real artwork, but nothing in it runs.
+    expect(frames[1]).toHaveAttribute('sandbox', '')
+    expect(frames[1]).toHaveAttribute('srcdoc', '<html>b</html>')
+    // Two cards out is off screen: a placeholder with no frame.
+    expect(screen.getByLabelText('Far (preview)')).toBeInTheDocument()
+  })
+
+  it('renders frames on both sides of a centered card in the middle', () => {
+    const scenes: Scene[] = [
+      ...SCENES,
+      { id: 'c', title: 'Far', source: '<html>c</html>', order: 2, archivedAt: null },
+    ]
+    const { container } = render(
+      <SceneFeed scenes={scenes} focusSceneId="b" {...feedProps()} />,
+    )
+
+    const frames = Array.from(container.querySelectorAll('iframe'))
+    expect(frames.map((frame) => frame.title)).toEqual([
+      'Glow (still)',
+      'Card',
+      'Far (still)',
+    ])
   })
 
   it('fades the top and bottom edges so the stack reads as rolling', () => {
@@ -86,5 +114,17 @@ describe('SceneFeed', () => {
     screen.getByRole('button', { name: 'Edit Card' }).click()
 
     expect(onOpen).toHaveBeenCalledWith('b')
+  })
+
+  it('exports the scene on its own card', async () => {
+    const user = userEvent.setup()
+    render(<SceneFeed scenes={SCENES} focusSceneId="a" {...feedProps()} />)
+    const [first] = screen.getAllByTestId('scene-card')
+
+    await user.click(within(first).getByRole('button', { name: 'Export scene' }))
+
+    expect(screen.getByRole('menuitem', { name: 'Download .html' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Copy HTML' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Open in new tab' })).toBeInTheDocument()
   })
 })
