@@ -5,8 +5,9 @@
 // document is exactly what the editor would have produced had every line been
 // typed in the right place. Nothing is reflowed and no token is rewritten: a
 // format never changes what the scene renders, only its leading whitespace.
-// That is deliberate — the source is the single source of truth (see DESIGN §5)
-// and a formatter that moved code around could disturb managed identity tokens.
+// That is deliberate — the source text is the single source of truth for what
+// a scene renders, with no separate model to rebuild it from, and a formatter
+// that moved code around could disturb managed identity tokens.
 
 import { EditorState, type ChangeSet, type Extension } from '@codemirror/state'
 import { ensureSyntaxTree, indentRange, indentUnit } from '@codemirror/language'
