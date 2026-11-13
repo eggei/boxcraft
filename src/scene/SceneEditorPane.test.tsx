@@ -56,10 +56,17 @@ describe("SceneEditorPane formatting", () => {
 describe("SceneEditorPane controls", () => {
   beforeEach(() => localStorage.clear());
 
-  it("gathers settings, tools and format into one stack", () => {
+  it("gathers settings, tools, the AI editor and format into one stack", () => {
     render(<SceneEditorPane source={DEFAULT_SOURCE} onChange={vi.fn()} />);
 
-    for (const name of ["Editor settings", "Select", "Box", "Attach JS", "Format source"]) {
+    for (const name of [
+      "Editor settings",
+      "Select",
+      "Box",
+      "Attach JS",
+      "AI editor",
+      "Format source",
+    ]) {
       expect(screen.getByRole("button", { name })).toBeVisible();
     }
   });

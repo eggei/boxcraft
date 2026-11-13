@@ -34,7 +34,14 @@ export function indentAllChanges(state: EditorState): ChangeSet {
   // Indentation is syntax-driven, and a view only parses what it has shown.
   // Without this the tail of a long document would indent against nothing.
   ensureSyntaxTree(state, state.doc.length, PARSE_BUDGET_MS)
-  return indentRange(state, 0, state.doc.length)
+  // That call finishes the parse but does not hand the result to `state`: the
+  // indenter reads the tree the state was *last updated* with, which is only
+  // what the (time-boxed, first-few-thousand-characters) initial parse
+  // reached. An empty transaction is what carries the finished tree across;
+  // without it a long or cold-started document is indented against a partial
+  // tree, and the same input formats differently from one run to the next.
+  // The document is unchanged, so the changes computed here apply to `state`.
+  return indentRange(state.update({}).state, 0, state.doc.length)
 }
 
 /**

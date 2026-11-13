@@ -45,6 +45,24 @@ describe('formatSource', () => {
   it('handles an empty document without throwing', () => {
     expect(formatSource('')).toBe('')
   })
+
+  it('formats a long document the same way every time', () => {
+    // Far past the few thousand characters a fresh state parses up front. The
+    // indenter used to read that partial tree, so the tail of a long scene was
+    // indented against nothing — differently from one run to the next.
+    let long = DEFAULT_SOURCE
+    for (let i = 0; i < 60; i++) {
+      long = createBox(long, { kind: 'point', x: i * 3, y: i * 3 }).source
+    }
+    expect(long.length).toBeGreaterThan(10_000)
+    const settled = formatSource(long)
+
+    // Any single format could get lucky, so ask repeatedly.
+    for (let run = 0; run < 5; run++) {
+      expect(formatSource(settled)).toBe(settled)
+      expect(formatSource(flatten(settled))).toBe(settled)
+    }
+  })
 })
 
 describe('isFormatted', () => {
