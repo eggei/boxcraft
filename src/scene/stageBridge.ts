@@ -14,9 +14,21 @@
  * strips it by construction.
  */
 import { BRIDGE_ATTR, instrument } from "./document";
+import { guardScripts, LOOP_GUARD } from "./loopGuard";
 
 /** Tags every bridge message, so stray `postMessage` traffic is ignored. */
 export const BRIDGE_CHANNEL = "boxcraft-stage";
+
+/** How long the scene may loop without yielding before a loop is stopped (ms). */
+export const LOOP_BUDGET = 1000;
+
+/**
+ * The bridge's script nonce. With scripts paused, a Content-Security-Policy
+ * allows only scripts carrying it — the bridge keeps working, the scene's own
+ * scripts and inline handlers don't run. Pausing is a convenience, not a
+ * security boundary (the sandbox is that), so a fixed value is enough.
+ */
+const BRIDGE_NONCE = "boxcraft-bridge";
 
 /** A rectangle in the iframe's viewport coordinates. */
 export interface BridgeRect {
@@ -50,6 +62,8 @@ export type BridgeMessage = { channel: typeof BRIDGE_CHANNEL } & (
   | ({ type: "layout" } & StageLayout)
   | { type: "click"; handle: string | null }
   | ({ type: "keydown" } & BridgeKey)
+  /** The loop guard stopped a loop that ran past the budget. */
+  | { type: "loop-stopped" }
 );
 
 /** What the stage posts in. */
@@ -93,7 +107,7 @@ export function layoutOf(message: BridgeMessage): StageLayout | null {
  * must stay self-contained: no imports, no closures over module scope, only
  * its parameters and the scene's globals.
  */
-export function installBridge(win: Window, channel: string) {
+export function installBridge(win: Window, channel: string, guardName: string, budget: number) {
   const doc = win.document;
   const host = win.parent;
 
@@ -101,6 +115,37 @@ export function installBridge(win: Window, channel: string) {
     message.channel = channel;
     host.postMessage(message, "*");
   }
+
+  // The loop guard (see loopGuard.ts): every guarded loop calls it once per
+  // iteration. The clock starts at the first call in a task and is reset by a
+  // timeout, which can only run once the task has yielded — so it measures
+  // continuous looping, whichever loops it is spread across. Once over budget
+  // it keeps throwing, so a loop whose own try/catch swallows the first error
+  // is still stopped on its next iteration.
+  let loopingSince = 0;
+  let reported = false;
+  (win as unknown as Record<string, unknown>)[guardName] = function guard() {
+    const now = win.performance.now();
+    if (!loopingSince) {
+      loopingSince = now;
+      win.setTimeout(function () {
+        loopingSince = 0;
+        reported = false;
+      }, 0);
+      return;
+    }
+    if (now - loopingSince < budget) return;
+    const message =
+      "BoxCraft stopped a loop that ran for over " +
+      budget / 1000 +
+      "s without yielding. Check the loop's exit condition.";
+    if (!reported) {
+      reported = true;
+      console.error(message);
+      post({ type: "loop-stopped" });
+    }
+    throw new Error(message);
+  };
 
   function rectOf(el: Element) {
     const r = el.getBoundingClientRect();
@@ -163,17 +208,22 @@ export function installBridge(win: Window, channel: string) {
 
 /** The bridge as an inline `<script>`, marked so `serialize` can find it. */
 export function bridgeScript(): string {
-  const call = `(${installBridge.toString()})(window, ${JSON.stringify(BRIDGE_CHANNEL)});`;
-  return `<script ${BRIDGE_ATTR}>${call}</script>`;
+  const args = [BRIDGE_CHANNEL, LOOP_GUARD, LOOP_BUDGET].map((a) => JSON.stringify(a));
+  const call = `(${installBridge.toString()})(window, ${args.join(", ")});`;
+  return `<script ${BRIDGE_ATTR} nonce="${BRIDGE_NONCE}">${call}</script>`;
 }
+
+/** Lets only the bridge run: the scene's scripts and inline handlers are off. */
+const PAUSE_POLICY = `<meta ${BRIDGE_ATTR} http-equiv="Content-Security-Policy" content="script-src 'nonce-${BRIDGE_NONCE}'">`;
 
 /**
  * Insert the bridge ahead of everything the scene runs: straight after the
  * opening `<head>` (or `<body>`, or `<html>`), else at the very start. First,
- * so its listeners are in place even if a scene script throws.
+ * so its listeners and the loop guard are in place before any scene script.
+ * With `pauseScripts`, a policy that blocks every other script goes first.
  */
-export function withBridge(html: string): string {
-  const script = bridgeScript();
+export function withBridge(html: string, { pauseScripts = false } = {}): string {
+  const script = (pauseScripts ? PAUSE_POLICY : "") + bridgeScript();
   for (const tag of [/<head\b[^>]*>/i, /<body\b[^>]*>/i, /<html\b[^>]*>/i]) {
     const m = tag.exec(html);
     if (m) {
@@ -187,4 +237,20 @@ export function withBridge(html: string): string {
 /** The document the stage iframe renders: instrumented, with the bridge. */
 export function stageDocument(source: string): string {
   return withBridge(instrument(source));
+}
+
+/**
+ * What the stage should render for `source`. Running, every inline script has
+ * its loops guarded; if a script doesn't parse, there is nothing safe to render
+ * (`ok: false`) and the stage keeps its last good render. Paused, the scripts
+ * are left as written but blocked from running, so even a broken one renders.
+ */
+export function renderStage(
+  source: string,
+  { pauseScripts = false } = {},
+): { ok: true; html: string } | { ok: false } {
+  const instrumented = instrument(source);
+  if (pauseScripts) return { ok: true, html: withBridge(instrumented, { pauseScripts }) };
+  const guarded = guardScripts(instrumented);
+  return guarded.ok ? { ok: true, html: withBridge(guarded.html) } : guarded;
 }

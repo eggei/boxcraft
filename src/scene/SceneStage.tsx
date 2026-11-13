@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { BoxPlacement } from './document'
+import { Pause, Play } from 'lucide-react'
+import { WithTooltip } from '@/components/ui/tooltip'
+import { translateHandle, type BoxPlacement } from './document'
 import {
   BRIDGE_CHANNEL,
   isBridgeMessage,
   layoutOf,
-  stageDocument,
+  renderStage,
   type StageLayout,
   type StageRequest,
 } from './stageBridge'
@@ -41,6 +43,11 @@ const CLICK_THRESHOLD = 4 // px of travel below which a drag counts as a click
  * into placements (Box tool), a box selection (Select tool), or a JS attach
  * (JS tool). The selection outline is drawn on an overlay layer, never
  * injected into the source.
+ *
+ * Scripts run with every loop guarded (see loopGuard.ts). While a script
+ * doesn't parse — usually because it is half-typed — the stage keeps showing
+ * the last render that did, with a quiet notice; and scripts can be paused
+ * outright from the stage corner.
  */
 export function SceneStage({
   source,
@@ -54,6 +61,34 @@ export function SceneStage({
   const [drag, setDrag] = useState<DragState | null>(null)
   /** The latest geometry the bridge reported, in iframe coordinates. */
   const [layout, setLayout] = useState<StageLayout | null>(null)
+  const [scriptsPaused, setScriptsPaused] = useState(false)
+
+  // What to render. A source whose scripts don't parse is not rendered: the
+  // last good render stays up, remembered along with the source it came from.
+  const render = useMemo(
+    () => renderStage(source, { pauseScripts: scriptsPaused }),
+    [source, scriptsPaused],
+  )
+  const [lastGood, setLastGood] = useState(() => {
+    // Broken from the start: show the scene with its scripts held back.
+    const first = render.ok ? render : renderStage(source, { pauseScripts: true })
+    return { source, html: first.ok ? first.html : '' }
+  })
+  if (render.ok && render.html !== lastGood.html) {
+    setLastGood({ source, html: render.html })
+  }
+  const shown = render.ok ? { source, html: render.html } : lastGood
+  const scriptBroken = !render.ok
+
+  // The render on screen may be of an older source, and handles are
+  // positional — so they are translated between the two at this boundary.
+  const toShown = (handle: string | null) =>
+    handle && translateHandle(source, shown.source, handle)
+  const fromShown = (handle: string) => translateHandle(shown.source, source, handle)
+
+  // The render a stopped loop was reported for; the notice goes with it.
+  const [loopStoppedIn, setLoopStoppedIn] = useState<string | null>(null)
+  const loopStopped = loopStoppedIn === shown.html
 
   /** Canvas bounding box in page coordinates, from the bridged layout. */
   function canvasPageRect(): DOMRect | null {
@@ -128,6 +163,7 @@ export function SceneStage({
   // iframe is listened to — any other window posting on the same channel is
   // ignored. Rebound when the tool or handlers change, so a click is always
   // read against the current tool.
+  const shownHtml = shown.html
   useEffect(
     function listenToBridge() {
       function onMessage(event: MessageEvent) {
@@ -143,12 +179,16 @@ export function SceneStage({
             break
           }
           case 'click': {
-            const handle = message.handle
-            if (typeof handle !== 'string') return
+            if (typeof message.handle !== 'string') return
+            const handle = fromShown(message.handle)
+            if (!handle) return
             if (tool === 'js') onAttachJs(handle)
             else if (tool === 'select') onSelectBox(handle)
             break
           }
+          case 'loop-stopped':
+            setLoopStoppedIn(shownHtml)
+            break
           case 'keydown':
             // Focus is inside the iframe, so the app's window listeners never
             // saw this key. Replaying it there keeps Esc, V/B/J, N and the
@@ -174,7 +214,9 @@ export function SceneStage({
         window.removeEventListener('message', onMessage)
       }
     },
-    [tool, onSelectBox, onAttachJs],
+    // fromShown is rebuilt every render from the two sources listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tool, onSelectBox, onAttachJs, source, shown.source, shownHtml],
   )
 
   // Ask the scene to re-measure when the selection or tool changes — boxes may
@@ -186,12 +228,13 @@ export function SceneStage({
       // The sandboxed frame has an opaque origin, so there is no origin to name.
       iframeRef.current?.contentWindow?.postMessage(request, '*')
     },
-    [selectedHandle, tool, source],
+    [selectedHandle, tool, shownHtml],
   )
 
   // Coordinates are iframe-relative and the overlay layer is aligned to the
   // iframe, so a reported rect is used as is.
-  const outline = selectedHandle ? layout?.boxes[selectedHandle] : undefined
+  const shownSelected = toShown(selectedHandle)
+  const outline = shownSelected ? layout?.boxes[shownSelected] : undefined
 
   return (
     <div className="bg-muted/30 relative h-full w-full">
@@ -199,9 +242,41 @@ export function SceneStage({
         ref={iframeRef}
         title="Scene preview"
         sandbox="allow-scripts"
-        srcDoc={stageDocument(source)}
+        srcDoc={shown.html}
         className="h-full w-full border-0"
       />
+
+      {/* Above the Box tool's overlay, so it stays clickable with any tool. */}
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+        {(scriptBroken || loopStopped) && (
+          <p
+            role="status"
+            className="bg-popover/90 text-muted-foreground shadow-raised rounded-md border px-2 py-1 text-xs"
+          >
+            {scriptBroken
+              ? 'Script has errors — showing the last render that ran'
+              : 'A loop ran too long and was stopped — see the console'}
+          </p>
+        )}
+        <WithTooltip
+          side="left"
+          tip={
+            scriptsPaused
+              ? "Run the scene's scripts again"
+              : "Render the scene without running its scripts"
+          }
+        >
+          <button
+            type="button"
+            aria-label={scriptsPaused ? 'Resume scripts' : 'Pause scripts'}
+            aria-pressed={scriptsPaused}
+            onClick={() => setScriptsPaused((paused) => !paused)}
+            className="bg-popover shadow-raised text-muted-foreground hover:text-foreground flex size-8 items-center justify-center rounded-lg border transition-colors"
+          >
+            {scriptsPaused ? <Play className="size-4" /> : <Pause className="size-4" />}
+          </button>
+        </WithTooltip>
+      </div>
 
       {outline && (
         <div

@@ -454,15 +454,17 @@ export function instrument(source: string): string {
 }
 
 /**
- * Marks the stage bridge `<script>` (see stageBridge.ts) — like `data-bc`, a
- * render-only addition that `serialize` removes.
+ * Marks the stage bridge `<script>` and its pause policy `<meta>` (see
+ * stageBridge.ts) — like `data-bc`, render-only additions that `serialize`
+ * removes.
  */
 export const BRIDGE_ATTR = 'data-bc-bridge'
 
 /** The clean, export-ready document: any instrumentation removed. */
 export function serialize(source: string): string {
   return source
-    .replace(new RegExp(`<script ${BRIDGE_ATTR}>[\\s\\S]*?</script>`, 'g'), '')
+    .replace(new RegExp(`<script ${BRIDGE_ATTR}\\b[^>]*>[\\s\\S]*?</script>`, 'g'), '')
+    .replace(new RegExp(`<meta ${BRIDGE_ATTR}\\b[^>]*>`, 'g'), '')
     .replace(new RegExp(`\\s${BC_ATTR}="[^"]*"`, 'g'), '')
 }
 

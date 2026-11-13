@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SceneStage } from './SceneStage'
 import { BRIDGE_CHANNEL, stageDocument } from './stageBridge'
+import { LOOP_GUARD } from './loopGuard'
 
 const SOURCE = '<!doctype html><html><body><div class="canvas"></div></body></html>'
 
@@ -156,5 +157,88 @@ describe('SceneStage bridge', () => {
     fireEvent.pointerUp(overlay, { clientX: 130, clientY: 90, pointerId: 1 })
 
     expect(props.onCreateBox).not.toHaveBeenCalled()
+  })
+})
+
+describe('SceneStage scripts', () => {
+  /** A scene with one box and a script after the canvas. */
+  const withScript = (code: string) =>
+    '<!doctype html><html><head></head><body><div class="canvas">' +
+    '<div class="box-1"></div></div>' +
+    `<script>${code}</script></body></html>`
+
+  const GOOD = withScript('while (spin()) {}')
+  const BROKEN = withScript('while (spin() {')
+
+  it('renders a scene whose script parses, with its loops guarded', () => {
+    render(<SceneStage source={GOOD} {...stageProps()} />)
+    expect(iframe().getAttribute('srcdoc')).toContain(`while (spin()) {${LOOP_GUARD}();}`)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('keeps the last good render while a script has errors, and says so', () => {
+    const { rerender } = render(<SceneStage source={GOOD} {...stageProps()} />)
+    const good = iframe().getAttribute('srcdoc')
+
+    rerender(<SceneStage source={BROKEN} {...stageProps()} />)
+    expect(iframe().getAttribute('srcdoc')).toBe(good)
+    expect(screen.getByRole('status')).toHaveTextContent('Script has errors')
+
+    rerender(<SceneStage source={GOOD.replace('spin', 'turn')} {...stageProps()} />)
+    expect(iframe().getAttribute('srcdoc')).toContain('turn()')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows a scene that is broken from the start with its scripts held back', () => {
+    render(<SceneStage source={BROKEN} {...stageProps()} />)
+    expect(iframe().getAttribute('srcdoc')).toContain('Content-Security-Policy')
+    expect(screen.getByRole('status')).toHaveTextContent('Script has errors')
+  })
+
+  it('reads clicks on a stale render against the box it showed', () => {
+    const props = stageProps()
+    const { rerender } = render(<SceneStage source={GOOD} {...props} />)
+    // A box added above box-1 while the script is broken: box-1 is bx_2 in
+    // the source now, but still bx_1 in the render on screen.
+    const shifted = BROKEN.replace('<div class="box-1">', '<div class="new"></div><div class="box-1">')
+    rerender(<SceneStage source={shifted} {...props} />)
+
+    post({ type: 'click', handle: 'bx_1' })
+    expect(props.onSelectBox).toHaveBeenCalledWith('bx_2')
+  })
+
+  it('pauses and resumes scripts from the stage corner', () => {
+    render(<SceneStage source={GOOD} {...stageProps()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause scripts' }))
+    const paused = iframe().getAttribute('srcdoc')!
+    expect(paused).toContain('Content-Security-Policy')
+    expect(paused).not.toContain(LOOP_GUARD + '();')
+    expect(screen.getByRole('button', { name: 'Resume scripts' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume scripts' }))
+    expect(iframe().getAttribute('srcdoc')).not.toContain('Content-Security-Policy')
+  })
+
+  it('renders a broken script while paused, without the errors notice', () => {
+    const { rerender } = render(<SceneStage source={GOOD} {...stageProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Pause scripts' }))
+
+    rerender(<SceneStage source={BROKEN} {...stageProps()} />)
+    expect(iframe().getAttribute('srcdoc')).toContain('while (spin() {')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('says when a loop was stopped, until the next render', () => {
+    const { rerender } = render(<SceneStage source={GOOD} {...stageProps()} />)
+
+    post({ type: 'loop-stopped' })
+    expect(screen.getByRole('status')).toHaveTextContent('loop ran too long')
+
+    rerender(<SceneStage source={GOOD.replace('spin', 'turn')} {...stageProps()} />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
