@@ -5,6 +5,10 @@
  * edge of the screen has nothing to gain from running. Real snapshot thumbnails
  * are a Phase 5 concern; the static preview here is a non-iframe placeholder.
  *
+ * The live frame may run the scene's scripts (a scene is code, and some draw
+ * with it), but `allow-scripts` without `allow-same-origin` gives it an opaque
+ * origin: no reach into the app's page, localStorage or IndexedDB library.
+ *
  * The static card carries a shadow the live one doesn't need: a tip is dimmed to
  * read as far away, and on the light theme the canvas is barely off the page
  * colour, so its own edge is what tells you another scene is there.
@@ -23,6 +27,7 @@ export function ScenePreview({
       <iframe
         title={title}
         srcDoc={source}
+        sandbox="allow-scripts"
         className="bg-canvas pointer-events-none h-full w-full rounded-lg border"
       />
     )

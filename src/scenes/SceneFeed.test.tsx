@@ -54,6 +54,8 @@ describe('SceneFeed', () => {
 
     const frames = Array.from(container.querySelectorAll('iframe'))
     expect(frames.map((frame) => frame.title)).toEqual(['Glow'])
+    // The one running scene still can't reach the app: scripts yes, origin no.
+    expect(frames[0]).toHaveAttribute('sandbox', 'allow-scripts')
     expect(screen.getByLabelText('Card (preview)')).toBeInTheDocument()
   })
 
