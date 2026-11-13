@@ -356,14 +356,13 @@ describe("library backup and restore", () => {
     const blobs = new Map<string, Blob>();
     let saved: Blob | null = null;
 
-    vi.stubGlobal("URL", {
-      createObjectURL(blob: Blob) {
-        const url = `blob:${blobs.size}`;
-        blobs.set(url, blob);
-        return url;
-      },
-      revokeObjectURL() {},
+    // Spy on the statics rather than replacing URL: the router still needs the constructor.
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      const url = `blob:${blobs.size}`;
+      blobs.set(url, blob as Blob);
+      return url;
     });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
       this: HTMLAnchorElement,
     ) {
