@@ -13,6 +13,8 @@ import {
   reorderScenes,
   renameScene,
   changedSceneIds,
+  sameScene,
+  applyStoredScenes,
   DEFAULT_SOURCE,
 } from './sceneList'
 
@@ -251,5 +253,40 @@ describe('changedSceneIds', () => {
       'seed-2',
       'seed-3',
     ])
+  })
+})
+
+describe('sameScene', () => {
+  it('compares by value, not identity', () => {
+    const [scene] = seedScenes()
+    expect(sameScene(scene, { ...scene })).toBe(true)
+    expect(sameScene(scene, { ...scene, title: 'Other' })).toBe(false)
+  })
+
+  it('treats a missing scene as equal only to another missing one', () => {
+    const [scene] = seedScenes()
+    expect(sameScene(undefined, undefined)).toBe(true)
+    expect(sameScene(scene, undefined)).toBe(false)
+  })
+})
+
+describe('applyStoredScenes', () => {
+  it('swaps a stored copy in place, appends a new one and drops a gone one', () => {
+    const base = seedScenes()
+    const renamed = { ...base[1], title: 'From the other tab' }
+    const added = createScene({ id: 'new', order: 2 })
+
+    const next = applyStoredScenes(
+      base,
+      new Map([
+        ['seed-1', undefined],
+        ['seed-2', renamed],
+        ['new', added],
+      ]),
+    )
+
+    expect(next.map((s) => s.id)).toEqual(['seed-2', 'seed-3', 'new'])
+    expect(next[0]).toBe(renamed)
+    expect(next[1]).toBe(base[2])
   })
 })

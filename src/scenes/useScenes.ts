@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getAllScenes,
+  getScene,
   removeScene,
   replaceAllScenes,
   saveScene,
 } from '@/persistence/scenes'
+import {
+  openSceneChannel,
+  type SceneChange,
+  type SceneChannel,
+} from '@/persistence/sceneChannel'
 import { importScenes, type ImportMode } from '@/library/libraryFile'
 import {
   addScene as addSceneOp,
+  applyStoredScenes,
   archiveScene as archiveOp,
   changedSceneIds,
   deleteScene as deleteOp,
@@ -15,6 +22,7 @@ import {
   renameScene as renameOp,
   reorderScenes as reorderOp,
   restoreScene as restoreOp,
+  sameScene,
   seedScenes,
   unarchiveScene as unarchiveOp,
   type Scene,
@@ -42,16 +50,33 @@ function newId(): string {
  * touched as dirty, and a debounced flush puts just those records. The flush is
  * also forced whenever the page may be going away, so a pending edit is not
  * lost to a closed tab.
+ *
+ * Other tabs share the store, so every write is announced on a broadcast
+ * channel and every announcement heard is merged in from the store — except for
+ * a scene this tab has unsaved edits to. That one becomes a conflict for the
+ * person to settle (`resolveConflict`); until they do, autosave holds it back
+ * rather than silently overwriting the other tab's version.
  */
 export function useScenes() {
   const [scenes, setScenes] = useState<Scene[]>([])
   const [status, setStatus] = useState<Status>('loading')
+  /** Ids of scenes another tab changed while this one had unsaved edits. */
+  const [conflicts, setConflicts] = useState<string[]>([])
 
   /** The list as last committed — what a flush outside a render writes from. */
   const committed = useRef<Scene[]>(scenes)
   /** Ids whose in-memory scene is newer than its stored record. */
   const dirty = useRef(new Set<string>())
+  /** Mirror of `conflicts` for code running outside a render. */
+  const conflicted = useRef(new Set<string>())
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const channel = useRef<SceneChannel | null>(null)
+
+  const announce = useCallback((change: SceneChange) => {
+    if (change.ids.length > 0 || change.type === 'replace') {
+      channel.current?.post(change)
+    }
+  }, [])
 
   useEffect(function restoreScenes() {
     let active = true
@@ -81,26 +106,34 @@ export function useScenes() {
   /**
    * Write every dirty scene now. A dirty id with no scene left in the list was
    * deleted — its record is removed by hand — so there is nothing to put. A
-   * write that fails puts its id back so the next flush tries again.
+   * write that fails puts its id back so the next flush tries again, and a
+   * scene in conflict stays dirty but unwritten until the conflict is settled.
    */
   const flush = useCallback(async () => {
     if (saveTimer.current !== null) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
-    if (dirty.current.size === 0) return
-    const ids = new Set(dirty.current)
-    dirty.current.clear()
+    const ids = new Set(
+      [...dirty.current].filter((id) => !conflicted.current.has(id)),
+    )
+    if (ids.size === 0) return
+    for (const id of ids) dirty.current.delete(id)
     const pending = committed.current.filter((scene) => ids.has(scene.id))
+    const saved: string[] = []
     await Promise.all(
       pending.map((scene) =>
-        saveScene(scene).catch((error: unknown) => {
-          dirty.current.add(scene.id)
-          console.error('Autosave failed', error)
-        }),
+        saveScene(scene).then(
+          () => saved.push(scene.id),
+          (error: unknown) => {
+            dirty.current.add(scene.id)
+            console.error('Autosave failed', error)
+          },
+        ),
       ),
     )
-  }, [])
+    announce({ type: 'save', ids: saved })
+  }, [announce])
 
   useEffect(
     function scheduleAutosave() {
@@ -130,6 +163,91 @@ export function useScenes() {
         window.removeEventListener('pagehide', onPageHide)
         void flush()
       }
+    },
+    [flush],
+  )
+
+  /**
+   * Another tab wrote to the store: re-read what it touched and take it, scene
+   * by scene. Where this tab has unsaved edits of its own, neither side wins
+   * automatically — the scene is flagged as a conflict instead.
+   */
+  const mergeRemoteChange = useCallback(async (change: SceneChange) => {
+    let stored: Map<string, Scene | undefined>
+    if (change.type === 'replace') {
+      const all = await getAllScenes()
+      stored = new Map(all.map((scene) => [scene.id, scene]))
+      // Whatever the replace dropped is gone here too.
+      for (const scene of committed.current) {
+        if (!stored.has(scene.id)) stored.set(scene.id, undefined)
+      }
+    } else {
+      const records = await Promise.all(change.ids.map((id) => getScene(id)))
+      stored = new Map(change.ids.map((id, index) => [id, records[index]]))
+    }
+
+    const local = new Map(committed.current.map((scene) => [scene.id, scene]))
+    const clashes: string[] = []
+    for (const [id, theirs] of stored) {
+      if (sameScene(local.get(id), theirs)) stored.delete(id)
+      else if (dirty.current.has(id)) {
+        clashes.push(id)
+        stored.delete(id)
+      }
+    }
+
+    if (stored.size > 0) {
+      // Checked again at apply time: an edit may have landed while the records
+      // were being read, and that edit must not be overwritten either.
+      setScenes((current) =>
+        applyStoredScenes(
+          current,
+          new Map([...stored].filter(([id]) => !dirty.current.has(id))),
+        ),
+      )
+    }
+    if (clashes.length > 0) {
+      for (const id of clashes) conflicted.current.add(id)
+      setConflicts([...conflicted.current])
+    }
+  }, [])
+
+  useEffect(
+    function syncWithOtherTabs() {
+      // Until the restore has run there is nothing to merge into — and the
+      // restore reads the store fresh anyway.
+      if (status !== 'ready') return
+      const opened = openSceneChannel((change) => {
+        void mergeRemoteChange(change).catch((error: unknown) => {
+          console.error('Syncing a change from another tab failed', error)
+        })
+      })
+      channel.current = opened
+      return () => {
+        opened.close()
+        if (channel.current === opened) channel.current = null
+      }
+    },
+    [status, mergeRemoteChange],
+  )
+
+  /**
+   * Settle a conflict. `theirs` drops the unsaved edits and takes the stored
+   * copy (which may be no scene at all, if the other tab deleted it); `mine`
+   * writes this tab's copy over it, which the other tab then picks up in turn.
+   */
+  const resolveConflict = useCallback(
+    async (id: string, keep: 'mine' | 'theirs') => {
+      conflicted.current.delete(id)
+      setConflicts([...conflicted.current])
+      if (keep === 'mine') {
+        dirty.current.add(id)
+        await flush()
+        return
+      }
+      dirty.current.delete(id)
+      const theirs = await getScene(id)
+      setScenes((current) => applyStoredScenes(current, new Map([[id, theirs]])))
     },
     [flush],
   )
@@ -182,12 +300,16 @@ export function useScenes() {
   const deleteScene = useCallback(
     (id: string) => {
       dirty.current.delete(id)
+      if (conflicted.current.delete(id)) setConflicts([...conflicted.current])
       mutate((current) => deleteOp(current, id))
-      void removeScene(id).catch((error: unknown) => {
-        console.error('Deleting the scene failed', error)
-      })
+      void removeScene(id).then(
+        () => announce({ type: 'delete', ids: [id] }),
+        (error: unknown) => {
+          console.error('Deleting the scene failed', error)
+        },
+      )
     },
-    [mutate],
+    [mutate, announce],
   )
 
   /** Undo a delete: the caller hands back the scene it was holding on to. */
@@ -235,15 +357,22 @@ export function useScenes() {
       const next = importScenes(scenes, incoming, { mode, newId })
       await replaceAllScenes(next)
       dirty.current.clear()
+      // The import settled every scene, conflicted ones included.
+      conflicted.current.clear()
+      setConflicts([])
       setScenes(next)
+      announce({ type: 'replace', ids: next.map((scene) => scene.id) })
       return next
     },
-    [scenes, flush],
+    [scenes, flush, announce],
   )
 
   return {
     scenes,
     status,
+    conflicts,
+    resolveConflict,
+    flush,
     addScene,
     duplicateScene,
     archiveScene,

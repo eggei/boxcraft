@@ -14,6 +14,7 @@ import { useScenes } from "@/scenes/useScenes";
 import { SceneFeed } from "@/scenes/SceneFeed";
 import { FilesView } from "@/scenes/FilesView";
 import { ArchivedView } from "@/scenes/ArchivedView";
+import { SceneConflictBanner } from "@/scenes/SceneConflictBanner";
 import { SceneEditorPane } from "@/scene/SceneEditorPane";
 import { activeScenes, type Scene } from "@/scenes/sceneList";
 import { editPath, feedPath, pageForPath, ROUTES } from "@/scenes/navigation";
@@ -42,6 +43,8 @@ function App() {
     reorderScenes,
     updateSource,
     importLibrary,
+    conflicts,
+    resolveConflict,
   } = useScenes();
 
   const { theme, toggle: toggleTheme } = useTheme();
@@ -291,6 +294,8 @@ function App() {
           </LayoutGroup>
         )}
       </main>
+
+      <SceneConflictBanner scenes={scenes} conflicts={conflicts} onResolve={resolveConflict} />
 
       {pendingDelete && (
         <ConfirmDialog

@@ -257,3 +257,37 @@ export function changedSceneIds(before: Scene[], after: Scene[]): string[] {
   const previous = new Map(before.map((s) => [s.id, s]))
   return after.filter((s) => previous.get(s.id) !== s).map((s) => s.id)
 }
+
+/** Whether two copies of a scene (or two absences of one) hold the same data. */
+export function sameScene(a: Scene | undefined, b: Scene | undefined): boolean {
+  if (!a || !b) return a === b
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.source === b.source &&
+    a.order === b.order &&
+    a.archivedAt === b.archivedAt
+  )
+}
+
+/**
+ * Fold stored copies of some scenes into the list — what another tab wrote.
+ * Each id maps to its stored record, or to `undefined` when the record is gone.
+ * A known scene is swapped in place, a new one is appended, a gone one leaves;
+ * order values are taken as stored, since the other tab already reflowed them.
+ */
+export function applyStoredScenes(
+  scenes: Scene[],
+  stored: ReadonlyMap<string, Scene | undefined>,
+): Scene[] {
+  const next = scenes.flatMap((s) => {
+    if (!stored.has(s.id)) return [s]
+    const record = stored.get(s.id)
+    return record ? [record] : []
+  })
+  const known = new Set(scenes.map((s) => s.id))
+  for (const [id, record] of stored) {
+    if (record && !known.has(id)) next.push(record)
+  }
+  return next
+}
