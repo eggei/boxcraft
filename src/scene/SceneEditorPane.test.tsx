@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SOURCE } from "@/scenes/sceneList";
 import { EDITOR_SETTINGS_KEY } from "@/settings/editorSettings";
 import { SceneEditorPane } from "./SceneEditorPane";
-import { instrument } from "./document";
+import { createBox } from "./document";
+import { BRIDGE_CHANNEL, stageDocument } from "./stageBridge";
 import { PREVIEW_DELAY } from "./usePreviewSource";
 
 /** DEFAULT_SOURCE with every line pushed flush left. */
@@ -201,13 +202,13 @@ describe("SceneEditorPane preview", () => {
     const typed = DEFAULT_SOURCE.replace("#fff", "#ffe");
 
     rerender(<SceneEditorPane source={typed} onChange={vi.fn()} />);
-    expect(rendered()).toBe(instrument(DEFAULT_SOURCE));
+    expect(rendered()).toBe(stageDocument(DEFAULT_SOURCE));
 
     act(() => vi.advanceTimersByTime(PREVIEW_DELAY - 1));
-    expect(rendered()).toBe(instrument(DEFAULT_SOURCE));
+    expect(rendered()).toBe(stageDocument(DEFAULT_SOURCE));
 
     act(() => vi.advanceTimersByTime(1));
-    expect(rendered()).toBe(instrument(typed));
+    expect(rendered()).toBe(stageDocument(typed));
   });
 
   it("restarts the wait on every keystroke", () => {
@@ -219,10 +220,10 @@ describe("SceneEditorPane preview", () => {
     act(() => vi.advanceTimersByTime(PREVIEW_DELAY - 50));
     rerender(<SceneEditorPane source={DEFAULT_SOURCE + "ab"} onChange={vi.fn()} />);
     act(() => vi.advanceTimersByTime(PREVIEW_DELAY - 50));
-    expect(rendered()).toBe(instrument(DEFAULT_SOURCE));
+    expect(rendered()).toBe(stageDocument(DEFAULT_SOURCE));
 
     act(() => vi.advanceTimersByTime(50));
-    expect(rendered()).toBe(instrument(DEFAULT_SOURCE + "ab"));
+    expect(rendered()).toBe(stageDocument(DEFAULT_SOURCE + "ab"));
   });
 
   it("shows a tool edit at once, without waiting", () => {
@@ -234,6 +235,62 @@ describe("SceneEditorPane preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Format source" }));
 
     expect(latest).toBe(DEFAULT_SOURCE);
-    expect(rendered()).toBe(instrument(DEFAULT_SOURCE));
+    expect(rendered()).toBe(stageDocument(DEFAULT_SOURCE));
+  });
+});
+
+describe("SceneEditorPane stage clicks", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.useRealTimers());
+
+  /** DEFAULT_SOURCE with box-1 and box-2. */
+  const TWO_BOXES = [1, 2].reduce(
+    (source, i) => createBox(source, { kind: "point", x: i * 10, y: i * 10 }).source,
+    DEFAULT_SOURCE,
+  );
+
+  function clickOnStage(handle: string) {
+    const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { channel: BRIDGE_CHANNEL, type: "click", handle },
+          source: iframe.contentWindow,
+        }),
+      );
+    });
+  }
+
+  it("selects the box that was clicked, even while the render lags behind typing", () => {
+    vi.useFakeTimers();
+    withAutoFormatOff();
+    const { rerender } = render(<SceneEditorPane source={TWO_BOXES} onChange={vi.fn()} />);
+
+    // A box typed in above the others shifts every positional handle by one,
+    // but the stage still shows the old render, where box-2 is bx_2.
+    const typed = TWO_BOXES.replace(
+      '<div class="box-1">',
+      '<div class="extra"></div>\n      <div class="box-1">',
+    );
+    rerender(<SceneEditorPane source={typed} onChange={vi.fn()} />);
+    clickOnStage("bx_2");
+
+    expect(screen.getByText(".box-2")).toBeInTheDocument();
+  });
+
+  it("never hands the bridge or the handles to the owner to store", async () => {
+    withAutoFormatOff();
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const messyBoxes = TWO_BOXES.split("\n")
+      .map((line) => line.trimStart())
+      .join("\n");
+    render(<SceneEditorPane source={messyBoxes} onChange={onChange} />);
+
+    clickOnStage("bx_1");
+    await user.click(screen.getByRole("button", { name: "Format source" }));
+
+    expect(onChange).toHaveBeenCalled();
+    for (const [stored] of onChange.mock.calls) expect(stored).not.toContain("data-bc");
   });
 });

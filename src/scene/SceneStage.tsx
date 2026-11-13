@@ -1,6 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { instrument, type BoxPlacement } from './document'
+import type { BoxPlacement } from './document'
+import {
+  BRIDGE_CHANNEL,
+  isBridgeMessage,
+  layoutOf,
+  stageDocument,
+  type StageLayout,
+  type StageRequest,
+} from './stageBridge'
 import type { Tool } from './Toolbar'
 
 interface SceneStageProps {
@@ -22,52 +30,17 @@ interface DragState {
 
 const CLICK_THRESHOLD = 4 // px of travel below which a drag counts as a click
 
-/** Canvas bounding box in page coordinates, read from the live iframe doc. */
-function canvasPageRect(iframe: HTMLIFrameElement | null): DOMRect | null {
-  const canvas = iframe?.contentDocument?.querySelector('.canvas')
-  if (!canvas) return null
-  const c = canvas.getBoundingClientRect()
-  const f = iframe!.getBoundingClientRect()
-  return new DOMRect(f.left + c.left, f.top + c.top, c.width, c.height)
-}
-
 /**
- * Replay an iframe key press on the parent window. Skipped while the scene's
- * own fields are being typed into — those keys are the scene's, not the app's.
- * If an app shortcut claims the replayed event, the original is claimed too,
- * so the scene doesn't also act on it.
- */
-function forwardKey(event: KeyboardEvent) {
-  const target = event.target as HTMLElement | null
-  if (
-    target &&
-    (target.isContentEditable ||
-      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  ) {
-    return
-  }
-  const replay = new KeyboardEvent('keydown', {
-    key: event.key,
-    code: event.code,
-    altKey: event.altKey,
-    ctrlKey: event.ctrlKey,
-    metaKey: event.metaKey,
-    shiftKey: event.shiftKey,
-    repeat: event.repeat,
-    bubbles: true,
-    cancelable: true,
-  })
-  window.dispatchEvent(replay)
-  if (replay.defaultPrevented) event.preventDefault()
-}
-
-/**
- * The rendered scene: an isolated iframe of the instrumented source (its
- * `console.log` reaches the real devtools — no in-app console). The source in
- * the iframe carries transient `data-bc` handles for hit-testing; the authored
- * document never does. Clicks are turned into placements (Box tool), a box
- * selection (Select tool), or a JS attach (JS tool). The selection outline is
- * drawn on an overlay layer, never injected into the source.
+ * The rendered scene: a sandboxed iframe of the instrumented source (its
+ * `console.log` reaches the real devtools — no in-app console). `allow-scripts`
+ * without `allow-same-origin` runs the scene in an opaque origin, so its code
+ * can't reach the app's storage or DOM — and the stage can't reach into it
+ * either. Everything the stage knows about the render (canvas and box rects,
+ * clicks by `data-bc` handle, key presses) arrives through the bridge script
+ * injected into the render-only copy (see stageBridge.ts). Clicks are turned
+ * into placements (Box tool), a box selection (Select tool), or a JS attach
+ * (JS tool). The selection outline is drawn on an overlay layer, never
+ * injected into the source.
  */
 export function SceneStage({
   source,
@@ -79,12 +52,22 @@ export function SceneStage({
 }: SceneStageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
-  const [outline, setOutline] = useState<DOMRect | null>(null)
+  /** The latest geometry the bridge reported, in iframe coordinates. */
+  const [layout, setLayout] = useState<StageLayout | null>(null)
+
+  /** Canvas bounding box in page coordinates, from the bridged layout. */
+  function canvasPageRect(): DOMRect | null {
+    const canvas = layout?.canvas
+    const iframe = iframeRef.current
+    if (!canvas || !iframe) return null
+    const f = iframe.getBoundingClientRect()
+    return new DOMRect(f.left + canvas.left, f.top + canvas.top, canvas.width, canvas.height)
+  }
 
   // Box-tool marquee/click → canvas-relative placement.
   function onPointerDown(event: ReactPointerEvent) {
     if (tool !== 'box') return
-    const rect = canvasPageRect(iframeRef.current)
+    const rect = canvasPageRect()
     if (!rect) return
     // Only start inside the canvas — it is the sole drop target.
     if (
@@ -95,7 +78,7 @@ export function SceneStage({
     ) {
       return
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     setDrag({
       startX: event.clientX,
       startY: event.clientY,
@@ -111,7 +94,7 @@ export function SceneStage({
 
   function onPointerUp() {
     if (!drag) return
-    const rect = canvasPageRect(iframeRef.current)
+    const rect = canvasPageRect()
     setDrag(null)
     if (!rect) return
 
@@ -141,81 +124,82 @@ export function SceneStage({
     })
   }
 
-  // The Select and JS tools hit-test clicks inside the iframe via `data-bc`.
-  // The listener lives on the iframe document so the scene's own JS still runs.
-  const onSelectRef = useRef(onSelectBox)
-  const onAttachRef = useRef(onAttachJs)
-  const toolRef = useRef(tool)
-  onSelectRef.current = onSelectBox
-  onAttachRef.current = onAttachJs
-  toolRef.current = tool
+  // Everything from the scene arrives as a message. Only the stage's own
+  // iframe is listened to — any other window posting on the same channel is
+  // ignored. Rebound when the tool or handlers change, so a click is always
+  // read against the current tool.
+  useEffect(
+    function listenToBridge() {
+      function onMessage(event: MessageEvent) {
+        const frame = iframeRef.current?.contentWindow
+        if (!frame || event.source !== frame) return
+        const message: unknown = event.data
+        if (!isBridgeMessage(message)) return
 
-  // Measure the selected box and size the outline to it. Reads the iframe's
-  // *current* document each call — `srcDoc` reloads swap it out, so a captured
-  // reference would go stale. Coordinates are iframe-relative (the overlay layer
-  // is aligned to the iframe), so no offset subtraction is needed.
-  const selectedRef = useRef(selectedHandle)
-  selectedRef.current = selectedHandle
-  const measureOutline = useRef(() => {})
-  measureOutline.current = () => {
-    const doc = iframeRef.current?.contentDocument
-    const handle = selectedRef.current
-    const el = handle && doc?.querySelector(`[data-bc="${handle}"]`)
-    if (!el) {
-      setOutline(null)
-      return
-    }
-    const b = el.getBoundingClientRect()
-    setOutline(new DOMRect(b.left, b.top, b.width, b.height))
-  }
-
-  // Once the stage has been clicked, focus is inside the iframe and its key
-  // presses never reach the app's window listeners — Esc, V/B/J, N and the
-  // rest would go dead. Each one is replayed on the parent window as an
-  // equivalent event, so the shortcuts work wherever focus happens to be.
-  useEffect(function bindIframe() {
-    const iframe = iframeRef.current
-    if (!iframe) return
-
-    function onLoad() {
-      const doc = iframe!.contentDocument
-      if (doc) {
-        doc.addEventListener('click', function hitTest(event) {
-          const tool = toolRef.current
-          if (tool !== 'select' && tool !== 'js') return
-          const target = event.target as Element | null
-          const handle = target?.closest('[data-bc]')?.getAttribute('data-bc')
-          if (!handle) return
-          if (tool === 'js') onAttachRef.current(handle)
-          else onSelectRef.current(handle)
-        })
-        doc.addEventListener('keydown', forwardKey)
+        switch (message.type) {
+          case 'layout': {
+            const next = layoutOf(message)
+            if (next) setLayout(next)
+            break
+          }
+          case 'click': {
+            const handle = message.handle
+            if (typeof handle !== 'string') return
+            if (tool === 'js') onAttachJs(handle)
+            else if (tool === 'select') onSelectBox(handle)
+            break
+          }
+          case 'keydown':
+            // Focus is inside the iframe, so the app's window listeners never
+            // saw this key. Replaying it there keeps Esc, V/B/J, N and the
+            // rest working after the stage has been clicked.
+            window.dispatchEvent(
+              new KeyboardEvent('keydown', {
+                key: String(message.key),
+                code: String(message.code),
+                altKey: !!message.altKey,
+                ctrlKey: !!message.ctrlKey,
+                metaKey: !!message.metaKey,
+                shiftKey: !!message.shiftKey,
+                repeat: !!message.repeat,
+                bubbles: true,
+                cancelable: true,
+              }),
+            )
+            break
+        }
       }
-      measureOutline.current() // re-align once the new render has painted
-    }
-
-    iframe.addEventListener('load', onLoad)
-    return function unbind() {
-      iframe.removeEventListener('load', onLoad)
-    }
-  }, [])
-
-  // Re-align the outline when the selection or source changes.
-  useLayoutEffect(
-    function positionOutline() {
-      measureOutline.current()
-      const id = window.setTimeout(() => measureOutline.current(), 60)
-      return () => window.clearTimeout(id)
+      window.addEventListener('message', onMessage)
+      return function unlisten() {
+        window.removeEventListener('message', onMessage)
+      }
     },
-    [selectedHandle, source],
+    [tool, onSelectBox, onAttachJs],
   )
+
+  // Ask the scene to re-measure when the selection or tool changes — boxes may
+  // have moved since the last report (a scene can animate them). A fresh
+  // render reports on its own once it has loaded.
+  useEffect(
+    function requestMeasure() {
+      const request: StageRequest = { channel: BRIDGE_CHANNEL, type: 'measure' }
+      // The sandboxed frame has an opaque origin, so there is no origin to name.
+      iframeRef.current?.contentWindow?.postMessage(request, '*')
+    },
+    [selectedHandle, tool, source],
+  )
+
+  // Coordinates are iframe-relative and the overlay layer is aligned to the
+  // iframe, so a reported rect is used as is.
+  const outline = selectedHandle ? layout?.boxes[selectedHandle] : undefined
 
   return (
     <div className="bg-muted/30 relative h-full w-full">
       <iframe
         ref={iframeRef}
         title="Scene preview"
-        srcDoc={instrument(source)}
+        sandbox="allow-scripts"
+        srcDoc={stageDocument(source)}
         className="h-full w-full border-0"
       />
 

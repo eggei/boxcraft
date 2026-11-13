@@ -7,6 +7,7 @@ import { getAllScenes, getScene } from "./persistence/scenes";
 import { SCENE_PITCH } from "./scenes/SceneFeed";
 import { LIBRARY_FORMAT, LIBRARY_VERSION } from "./library/libraryFile";
 import { EDITOR_SETTINGS_KEY } from "./settings/editorSettings";
+import { BRIDGE_CHANNEL } from "./scene/stageBridge";
 
 /**
  * The app reads its location from the router, so tests mount it behind an
@@ -336,13 +337,13 @@ describe("keyboard shortcuts", () => {
     renderApp("/edit/seed-1");
     await screen.findByLabelText("Scene title");
 
+    // The sandboxed stage can only tell the app about a key press through its
+    // bridge — this is the message the bridge posts for Esc.
     const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
-    iframe.dispatchEvent(new Event("load"));
-    const frameDoc = iframe.contentDocument!;
-    frameDoc.body.dispatchEvent(
-      new (frameDoc.defaultView as Window & typeof globalThis).KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { channel: BRIDGE_CHANNEL, type: "keydown", key: "Escape", code: "Escape" },
+        source: iframe.contentWindow,
       }),
     );
 
