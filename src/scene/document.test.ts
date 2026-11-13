@@ -142,6 +142,90 @@ describe('listBoxes', () => {
   })
 })
 
+describe('canvas and box scanning', () => {
+  /** A scene whose body is `body`, with one rule per class in `classes`. */
+  const scene = (body: string, classes: string[] = []) => `<!doctype html>
+<html>
+  <head>
+    <style>
+${classes.map((c) => `      .${c} { color: red; }`).join('\n')}
+    </style>
+  </head>
+  <body>
+    ${body}
+  </body>
+</html>
+`
+
+  it('treats any element directly under the canvas as a box, not just divs', () => {
+    const source = scene(
+      '<div class="canvas"><span class="box-1"></span><section class="box-2"></section></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1', 'box-2'])
+
+    const doc = parse(instrument(source))
+    expect(doc.querySelector('span.box-1')?.getAttribute('data-bc')).toBe('bx_1')
+    expect(doc.querySelector('section.box-2')?.getAttribute('data-bc')).toBe('bx_2')
+  })
+
+  it("finds a canvas whose class is single-quoted or unquoted", () => {
+    const single = scene(`<div class='canvas'><div class='box-1'></div></div>`)
+    const bare = scene('<div class=canvas><div class=box-1></div></div>')
+
+    for (const source of [single, bare]) {
+      expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+      const doc = parse(createBox(source, { kind: 'point', x: 0, y: 0 }).source)
+      expect(doc.querySelector('.box-2')?.parentElement).toBe(doc.querySelector('.canvas'))
+    }
+  })
+
+  it('matches the canvas by whole class token only', () => {
+    const source = scene(
+      '<div class="canvas-wrap"><div class="box-9"></div></div>' +
+        '<div class="stage canvas"><div class="box-1"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+  })
+
+  it("counts only the canvas's direct children, not nested elements", () => {
+    const source = scene(
+      '<div class="canvas"><div class="box-1"><div class="eye"></div><span class="pupil"></span></div><div class="box-2"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1', 'box-2'])
+  })
+
+  it('is not fooled by `<div` inside comments or attribute values', () => {
+    const source = scene(
+      '<div class="canvas"><!-- <div class="ghost"> --><div class="box-1" title="<div>"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+    // ...and a new box still lands inside the canvas, after the real child.
+    const placed = createBox(source, { kind: 'point', x: 0, y: 0 }).source
+    expect(parse(placed).querySelectorAll('.canvas > div')).toHaveLength(2)
+  })
+
+  it('renames and wires single-quoted boxes in place', () => {
+    const source = scene(`<div class="canvas"><span class='box-1'></span></div>`, ['box-1'])
+    const handle = listBoxes(source)[0].handle
+
+    const renamed = rename(source, handle, 'hero').source
+    expect(renamed).toContain(`<span class='hero'>`)
+    expect(renamed).toContain('.hero {')
+
+    const attached = attachJs(renamed, handle).source
+    expect(parse(attached).querySelector('span.hero')?.id).toBe('hero')
+
+    const detached = detachJs(attached, handle).source
+    expect(detached).toContain(`<span class='hero'>`)
+  })
+
+  it('adds an id before the `/>` of a self-closing box', () => {
+    const source = scene('<div class="canvas"><img class="box-1" /></div>', ['box-1'])
+    const attached = attachJs(source, listBoxes(source)[0].handle).source
+    expect(attached).toContain('<img class="box-1" id="box-1" />')
+  })
+})
+
 describe('instrument / serialize', () => {
   it('tags each rendered box with its handle for hit-testing', () => {
     const source = withBoxes(2)

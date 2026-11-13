@@ -6,6 +6,9 @@
  * on top of this; they hold no parallel model.
  */
 
+import { parser as htmlParser } from '@lezer/html'
+import type { SyntaxNode } from '@lezer/common'
+
 /** Where a new box goes, in canvas-relative pixels. */
 export type BoxPlacement =
   | { kind: 'point'; x: number; y: number }
@@ -44,25 +47,6 @@ function nextBoxNumber(source: string): number {
 }
 
 /**
- * Offset just before the canvas element's own closing `</div>`, found by
- * depth-counting nested divs so boxes nest correctly as canvas children.
- */
-function canvasCloseOffset(source: string): number {
-  const open = source.search(/<div[^>]*class="[^"]*\bcanvas\b[^"]*"[^>]*>/)
-  if (open === -1) throw new Error('createBox: no .canvas element in source')
-  const openEnd = source.indexOf('>', open) + 1
-
-  let depth = 1
-  const tag = /<div\b|<\/div>/g
-  tag.lastIndex = openEnd
-  for (let m = tag.exec(source); m; m = tag.exec(source)) {
-    depth += m[0] === '</div>' ? -1 : 1
-    if (depth === 0) return m.index
-  }
-  throw new Error('createBox: unterminated .canvas element')
-}
-
-/**
  * A box's app-owned identity. The `handle` is opaque and positional (document
  * order among canvas children) — it never appears in the source, so it survives
  * a rename (which only rewrites the public `className`). Cross-edit continuity
@@ -74,49 +58,129 @@ export interface Box {
   className: string
 }
 
+/** One attribute of an opening tag, with source offsets. */
+interface RawAttr {
+  /** Lower-cased attribute name (HTML attribute names are case-insensitive). */
+  name: string
+  /** The value as written, without its quotes ('' for a bare attribute). */
+  value: string
+  /** Offset of the attribute's first character (its name). */
+  from: number
+  /** Offset just past the attribute (past the closing quote, if any). */
+  to: number
+  /** Offset where the value starts, inside any quotes. */
+  valueFrom: number
+}
+
 interface RawBox {
   /** Offset of the `<` of the opening tag. */
   openStart: number
-  /** Offset just after the `>` of the opening tag. */
+  /** Offset just after the `>` (or `/>`) of the opening tag. */
   openEnd: number
-  /** The full opening tag text, e.g. `<div class="box-1">`. */
-  openTag: string
+  /** Offset just after the tag name — an attribute can always go here. */
+  tagNameEnd: number
+  /** Offset of the tag's closing `>` or `/>` — where an attribute is appended. */
+  endTagStart: number
+  attrs: RawAttr[]
+}
+
+function attrsOf(source: string, tag: SyntaxNode): RawAttr[] {
+  const attrs: RawAttr[] = []
+  for (const attr of tag.getChildren('Attribute')) {
+    const nameNode = attr.getChild('AttributeName')
+    if (!nameNode) continue
+    const quoted = attr.getChild('AttributeValue')
+    const bare = attr.getChild('UnquotedAttributeValue')
+    let value = ''
+    let valueFrom = attr.to
+    if (quoted) {
+      // The node spans the quotes; strip whichever quote style was used.
+      const text = source.slice(quoted.from, quoted.to)
+      const closed = text.length > 1 && text[text.length - 1] === text[0]
+      valueFrom = quoted.from + 1
+      value = text.slice(1, closed ? -1 : undefined)
+    } else if (bare) {
+      valueFrom = bare.from
+      value = source.slice(bare.from, bare.to)
+    }
+    attrs.push({
+      name: source.slice(nameNode.from, nameNode.to).toLowerCase(),
+      value,
+      from: attr.from,
+      to: attr.to,
+      valueFrom,
+    })
+  }
+  return attrs
+}
+
+/** Read an element's opening tag; null while it is still being typed. */
+function rawBoxOf(source: string, element: SyntaxNode): RawBox | null {
+  const tag = element.getChild('OpenTag') ?? element.getChild('SelfClosingTag')
+  const tagName = tag?.getChild('TagName')
+  const endTag = tag?.getChild('EndTag')
+  if (!tag || !tagName || !endTag) return null
+  return {
+    openStart: tag.from,
+    openEnd: endTag.to,
+    tagNameEnd: tagName.to,
+    endTagStart: endTag.from,
+    attrs: attrsOf(source, tag),
+  }
+}
+
+function attrOf(raw: RawBox, name: string): RawAttr | undefined {
+  return raw.attrs.find((a) => a.name === name)
+}
+
+function classAttrOf(raw: RawBox): string | null {
+  return attrOf(raw, 'class')?.value ?? null
 }
 
 /**
- * Scan the direct children of the canvas (flat boxes — no nesting in MVP),
- * returning each box's opening-tag range and text in document order.
+ * The canvas `Element` node: the first element carrying a `canvas` class token,
+ * however the attribute is quoted (or not). Parsing rather than pattern
+ * matching means comments, script/style text and attribute values that merely
+ * contain `<div` or `canvas` never confuse the scan.
  */
-function scanBoxes(source: string): RawBox[] {
-  const open = source.search(/<div[^>]*class="[^"]*\bcanvas\b[^"]*"[^>]*>/)
-  if (open === -1) return []
-  const canvasOpenEnd = source.indexOf('>', open) + 1
-
-  const boxes: RawBox[] = []
-  let depth = 1
-  const tag = /<div\b[^>]*>|<\/div>/g
-  tag.lastIndex = canvasOpenEnd
-  for (let m = tag.exec(source); m; m = tag.exec(source)) {
-    if (m[0] === '</div>') {
-      depth -= 1
-      if (depth === 0) break // reached the canvas's own closing tag
-    } else {
-      if (depth === 1) {
-        boxes.push({
-          openStart: m.index,
-          openEnd: m.index + m[0].length,
-          openTag: m[0],
-        })
-      }
-      depth += 1
+function findCanvas(source: string): SyntaxNode | null {
+  const cursor = htmlParser.parse(source).cursor()
+  do {
+    if (cursor.name !== 'Element') continue
+    const raw = rawBoxOf(source, cursor.node)
+    if (raw && (classAttrOf(raw) ?? '').split(/\s+/).includes('canvas')) {
+      return cursor.node
     }
-  }
-  return boxes
+  } while (cursor.next())
+  return null
 }
 
-function classAttrOf(openTag: string): string | null {
-  const m = openTag.match(/\bclass="([^"]*)"/)
-  return m ? m[1] : null
+/**
+ * Offset just before the canvas element's own closing tag, so a new box lands
+ * as the canvas's last child.
+ */
+function canvasCloseOffset(source: string): number {
+  const canvas = findCanvas(source)
+  if (!canvas) throw new Error('createBox: no .canvas element in source')
+  const close = canvas.getChild('CloseTag')
+  if (!close) throw new Error('createBox: unterminated .canvas element')
+  return close.from
+}
+
+/**
+ * Scan the direct element children of the canvas — any tag name; flat boxes,
+ * no nesting in MVP — returning each box's opening-tag geometry in document
+ * order.
+ */
+function scanBoxes(source: string): RawBox[] {
+  const canvas = findCanvas(source)
+  if (!canvas) return []
+  const boxes: RawBox[] = []
+  for (const child of canvas.getChildren('Element')) {
+    const raw = rawBoxOf(source, child)
+    if (raw) boxes.push(raw)
+  }
+  return boxes
 }
 
 /**
@@ -133,7 +197,7 @@ function identityClass(classAttr: string | null): string {
 export function listBoxes(source: string): Box[] {
   return scanBoxes(source).map((raw, i) => ({
     handle: `bx_${i + 1}`,
-    className: identityClass(classAttrOf(raw.openTag)),
+    className: identityClass(classAttrOf(raw)),
   }))
 }
 
@@ -162,15 +226,14 @@ function escapeRegExp(s: string): string {
 
 /** Ranges of each whitespace-separated class token inside a box's opening tag. */
 function classTokenRanges(raw: RawBox): { name: string; from: number; to: number }[] {
-  const m = /class="([^"]*)"/.exec(raw.openTag)
-  if (!m) return []
-  const valueStart = raw.openStart + m.index + 'class="'.length
+  const attr = attrOf(raw, 'class')
+  if (!attr) return []
   const out: { name: string; from: number; to: number }[] = []
-  for (const t of m[1].matchAll(/\S+/g)) {
+  for (const t of attr.value.matchAll(/\S+/g)) {
     out.push({
       name: t[0],
-      from: valueStart + t.index,
-      to: valueStart + t.index + t[0].length,
+      from: attr.valueFrom + t.index,
+      to: attr.valueFrom + t.index + t[0].length,
     })
   }
   return out
@@ -178,9 +241,10 @@ function classTokenRanges(raw: RawBox): { name: string; from: number; to: number
 
 export function resolveTokens(source: string): ManagedToken[] {
   // Identity class → its HTML class-attr occurrences, for boxes that exist.
+  const boxes = scanBoxes(source)
   const htmlRanges = new Map<string, TokenRange[]>()
-  for (const raw of scanBoxes(source)) {
-    const cls = identityClass(classAttrOf(raw.openTag))
+  for (const raw of boxes) {
+    const cls = identityClass(classAttrOf(raw))
     if (!cls) continue
     const ranges = htmlRanges.get(cls) ?? []
     for (const t of classTokenRanges(raw)) {
@@ -208,10 +272,12 @@ export function resolveTokens(source: string): ManagedToken[] {
     for (const m of source.matchAll(new RegExp('\\.' + escaped + '(?![\\w-])', 'g'))) {
       ranges.push({ from: m.index + 1, to: m.index + 1 + name.length })
     }
-    // Managed `id="name"` (added by the JS tool; the id mirrors the class)
-    for (const m of source.matchAll(new RegExp('\\bid="(' + escaped + ')"', 'g'))) {
-      const at = m.index + m[0].indexOf(name)
-      ranges.push({ from: at, to: at + name.length })
+    // Managed `id` on a box (added by the JS tool; the id mirrors the class)
+    for (const raw of boxes) {
+      const id = attrOf(raw, 'id')
+      if (id?.value === name) {
+        ranges.push({ from: id.valueFrom, to: id.valueFrom + name.length })
+      }
     }
     // `getElementById('name')` argument
     for (const m of source.matchAll(
@@ -281,12 +347,6 @@ export function ensureRule(source: string, handle: string): EnsureRuleResult {
   return { source: next, cursor, created: true }
 }
 
-/** A box's opening-tag `id`, or null. */
-function idAttrOf(openTag: string): string | null {
-  const m = openTag.match(/\bid="([^"]*)"/)
-  return m ? m[1] : null
-}
-
 /** Auto-derive a JS variable name from a class (`box-1` → `box1`). */
 function varNameFor(className: string): string {
   const parts = className.split(/[^a-zA-Z0-9]+/).filter(Boolean)
@@ -317,18 +377,20 @@ export function attachJs(source: string, handle: string): AttachJsResult {
   if (idx === -1) return { source, cursor: 0, varName: '' }
 
   const raw = boxes[idx]
-  const id = identityClass(classAttrOf(raw.openTag))
+  const id = identityClass(classAttrOf(raw))
   const varName = varNameFor(id)
 
   // Already wired → jump to the existing const line (no duplicate).
-  if (idAttrOf(raw.openTag)) {
+  if (attrOf(raw, 'id')?.value) {
     const marker = `getElementById('${id}')`
     const at = source.indexOf(marker)
     return { source, cursor: at === -1 ? source.length : at + marker.length, varName }
   }
 
-  // 1. Add the id to the box's opening tag (just before its closing `>`).
-  const insertIdAt = raw.openEnd - 1
+  // 1. Add the id to the box's opening tag (just before its closing `>`, or
+  //    before the `/>` of a self-closing tag), ahead of any padding there.
+  let insertIdAt = raw.endTagStart
+  while (insertIdAt > raw.tagNameEnd && /\s/.test(source[insertIdAt - 1])) insertIdAt--
   let out = source.slice(0, insertIdAt) + ` id="${id}"` + source.slice(insertIdAt)
 
   // 2. Append the wiring to the single shared <script> (create if absent).
@@ -363,12 +425,14 @@ export function detachJs(source: string, handle: string): { source: string } {
   if (idx === -1) return { source }
 
   const raw = boxes[idx]
-  const id = idAttrOf(raw.openTag)
-  if (!id) return { source } // no JS attached
+  const idAttr = attrOf(raw, 'id')
+  const id = idAttr?.value
+  if (!idAttr || !id) return { source } // no JS attached
 
-  // 1. Strip the id from the opening tag.
-  const newTag = raw.openTag.replace(/\s+id="[^"]*"/, '')
-  let out = source.slice(0, raw.openStart) + newTag + source.slice(raw.openEnd)
+  // 1. Strip the id attribute, and the whitespace before it, from the tag.
+  let stripFrom = idAttr.from
+  while (stripFrom > raw.openStart && /\s/.test(source[stripFrom - 1])) stripFrom--
+  let out = source.slice(0, stripFrom) + source.slice(idAttr.to)
 
   // 2. Remove the const line that references this id — and only that line.
   const line = new RegExp(
@@ -435,7 +499,7 @@ export function instrument(source: string): string {
   let out = source
   for (let i = boxes.length - 1; i >= 0; i--) {
     const raw = boxes[i]
-    const insertAt = raw.openStart + '<div'.length
+    const insertAt = raw.tagNameEnd
     const attr = ` ${BC_ATTR}="bx_${i + 1}"`
     out = out.slice(0, insertAt) + attr + out.slice(insertAt)
   }
