@@ -294,3 +294,56 @@ describe("SceneEditorPane stage clicks", () => {
     for (const [stored] of onChange.mock.calls) expect(stored).not.toContain("data-bc");
   });
 });
+
+describe("SceneEditorPane box dragging", () => {
+  beforeEach(() => localStorage.clear());
+
+  /** DEFAULT_SOURCE with box-1 at (10, 20), 100 × 100. */
+  const ONE_BOX = createBox(DEFAULT_SOURCE, { kind: "point", x: 10, y: 20 }).source;
+
+  /** Deliver a bridge message to the stage, as its iframe would. */
+  function fromStage(data: Record<string, unknown>) {
+    const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { channel: BRIDGE_CHANNEL, ...data },
+          source: iframe.contentWindow,
+        }),
+      );
+    });
+  }
+
+  const rect = (left: number, top: number, width: number, height: number) => ({
+    left,
+    top,
+    width,
+    height,
+  });
+
+  it("rewrites the box's rule on drop as one edit, which one undo reverts", () => {
+    withAutoFormatOff();
+    const onChange = vi.fn();
+    const { container } = render(<SceneEditorPane source={ONE_BOX} onChange={onChange} />);
+    fromStage({ type: "click", handle: "bx_1" });
+    fromStage({
+      type: "layout",
+      canvas: rect(0, 0, 400, 400),
+      boxes: { bx_1: rect(10, 20, 100, 100) },
+    });
+    onChange.mockClear();
+
+    const frame = screen.getByTestId("selection-outline");
+    fireEvent.pointerDown(frame, { clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(frame, { clientX: 80, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(frame, { clientX: 80, clientY: 90, pointerId: 1 });
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const moved = onChange.mock.calls[0][0] as string;
+    expect(moved).toBe(ONE_BOX.replace("left: 10px", "left: 40px").replace("top: 20px", "top: 60px"));
+
+    onChange.mockClear();
+    fireEvent.keyDown(container.querySelector(".cm-content")!, { key: "z", ctrlKey: true });
+    expect(onChange).toHaveBeenLastCalledWith(ONE_BOX);
+  });
+});

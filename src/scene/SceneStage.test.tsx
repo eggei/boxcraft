@@ -13,6 +13,7 @@ function stageProps() {
     onCreateBox: vi.fn(),
     onSelectBox: vi.fn(),
     onAttachJs: vi.fn(),
+    onMoveResizeBox: vi.fn(),
   }
 }
 
@@ -240,5 +241,103 @@ describe('SceneStage scripts', () => {
 
     rerender(<SceneStage source={GOOD.replace('spin', 'turn')} {...stageProps()} />)
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
+describe('SceneStage box dragging', () => {
+  const BOX_SOURCE =
+    '<!doctype html><html><head></head><body><div class="canvas">' +
+    '<div class="box-1"></div></div></body></html>'
+
+  /** A stage with bx_1 selected and measured: canvas at (20, 30), box inside it. */
+  function selectedStage(tool: 'select' | 'box' | 'js' = 'select') {
+    const props = { ...stageProps(), tool, selectedHandle: 'bx_1' }
+    const view = render(<SceneStage source={BOX_SOURCE} {...props} />)
+    post({
+      type: 'layout',
+      canvas: rect(20, 30, 400, 400),
+      boxes: { bx_1: rect(70, 80, 100, 60) },
+    })
+    return { props, ...view }
+  }
+
+  const frame = () => screen.getByTestId('selection-outline')
+
+  function drag(target: HTMLElement, from: [number, number], to: [number, number]) {
+    fireEvent.pointerDown(target, { clientX: from[0], clientY: from[1], pointerId: 1 })
+    fireEvent.pointerMove(target, { clientX: to[0], clientY: to[1], pointerId: 1 })
+    fireEvent.pointerUp(target, { clientX: to[0], clientY: to[1], pointerId: 1 })
+  }
+
+  it('moves the box by its body, reporting canvas-relative rects on drop', () => {
+    const { props } = selectedStage()
+
+    drag(frame(), [100, 100], [125, 90])
+
+    expect(props.onMoveResizeBox).toHaveBeenCalledTimes(1)
+    expect(props.onMoveResizeBox).toHaveBeenCalledWith(
+      'bx_1',
+      rect(50, 50, 100, 60),
+      rect(75, 40, 100, 60),
+    )
+  })
+
+  it('follows the pointer with the outline, and writes nothing until the drop', () => {
+    const { props } = selectedStage()
+
+    fireEvent.pointerDown(frame(), { clientX: 100, clientY: 100, pointerId: 1 })
+    fireEvent.pointerMove(frame(), { clientX: 110, clientY: 105, pointerId: 1 })
+
+    expect(frame().style.left).toBe('80px')
+    expect(frame().style.top).toBe('85px')
+    expect(props.onMoveResizeBox).not.toHaveBeenCalled()
+  })
+
+  it('resizes from a corner handle', () => {
+    const { props } = selectedStage()
+
+    drag(screen.getByTestId('resize-se'), [170, 140], [190, 150])
+
+    expect(props.onMoveResizeBox).toHaveBeenCalledWith(
+      'bx_1',
+      rect(50, 50, 100, 60),
+      rect(50, 50, 120, 70),
+    )
+  })
+
+  it('resizes from the left edge by moving that side only', () => {
+    const { props } = selectedStage()
+
+    drag(screen.getByTestId('resize-w'), [70, 110], [60, 110])
+
+    expect(props.onMoveResizeBox).toHaveBeenCalledWith(
+      'bx_1',
+      rect(50, 50, 100, 60),
+      rect(40, 50, 110, 60),
+    )
+  })
+
+  it("won't turn a box inside out — a side stops 1px short of the other", () => {
+    const { props } = selectedStage()
+
+    drag(screen.getByTestId('resize-n'), [120, 80], [120, 300])
+
+    expect(props.onMoveResizeBox).toHaveBeenCalledWith(
+      'bx_1',
+      rect(50, 50, 100, 60),
+      rect(50, 109, 100, 1),
+    )
+  })
+
+  it('treats a press without movement as no edit', () => {
+    const { props } = selectedStage()
+    drag(frame(), [100, 100], [100, 100])
+    expect(props.onMoveResizeBox).not.toHaveBeenCalled()
+  })
+
+  it('offers the frame and handles only with the Select tool', () => {
+    selectedStage('js')
+    expect(screen.queryByTestId('resize-se')).not.toBeInTheDocument()
+    expect(frame()).toHaveClass('pointer-events-none')
   })
 })

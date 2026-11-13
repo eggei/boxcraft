@@ -7,7 +7,7 @@ import { EditorSettingsMenu } from "./EditorSettingsMenu";
 import { SceneEditor, type SceneEditorHandle } from "./SceneEditor";
 import { SceneStage } from "./SceneStage";
 import { Toolbar, type Tool } from "./Toolbar";
-import { listBoxes, translateHandle, type BoxPlacement } from "./document";
+import { listBoxes, translateHandle, type BoxGeometry, type BoxPlacement } from "./document";
 import { usePreviewSource } from "./usePreviewSource";
 
 /**
@@ -86,6 +86,13 @@ export function SceneEditorPane({
   function handleStageAttachJs(stageHandle: string) {
     const handle = fromStage(stageHandle);
     if (handle) attachJsTo(handle);
+  }
+
+  // A drag on the stage lands as one edit to the box's rule — and is shown at
+  // once, so the box doesn't snap back for the length of the debounce.
+  function handleMoveResizeBox(stageHandle: string, from: BoxGeometry, to: BoxGeometry) {
+    const handle = fromStage(stageHandle);
+    if (handle) asToolEdit(() => editorRef.current?.moveResizeBox(handle, from, to));
   }
 
   function handleDetachJs() {
@@ -183,6 +190,7 @@ export function SceneEditorPane({
           onCreateBox={handleCreateBox}
           onSelectBox={handleStageSelect}
           onAttachJs={handleStageAttachJs}
+          onMoveResizeBox={handleMoveResizeBox}
         />
         {selectedBox && (
           <div className="bg-popover shadow-raised absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">

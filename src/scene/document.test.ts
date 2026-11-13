@@ -2,16 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SOURCE } from '@/scenes/sceneList'
 import {
   attachJs,
+  boxGeometry,
   boxAtOffset,
   createBox,
   detachJs,
   ensureRule,
   instrument,
   listBoxes,
+  moveResizeBox,
   rename,
   resolveTokens,
   ruleRangeOf,
   serialize,
+  setBoxGeometry,
   translateHandle,
 } from './document'
 
@@ -469,5 +472,134 @@ describe('translateHandle', () => {
     )
     const after = before.replace('</style>', '.x { }</style>')
     expect(translateHandle(before, after, 'bx_1')).toBe('bx_1')
+  })
+})
+
+/** DEFAULT_SOURCE with one box whose rule body is exactly `body`. */
+function withRule(body: string): string {
+  const source = DEFAULT_SOURCE.replace(
+    '<div class="canvas"></div>',
+    '<div class="canvas"><div class="box-1"></div></div>',
+  )
+  return source.replace('</style>', `  .box-1 {${body}}\n    </style>`)
+}
+
+/** The text between the braces of box-1's rule. */
+function ruleBodyOf(source: string): string {
+  const range = ruleRangeOf(source, 'box-1')!
+  const rule = source.slice(range.from, range.to)
+  return rule.slice(rule.indexOf('{') + 1, -1)
+}
+
+describe('boxGeometry', () => {
+  it('reads the pixel values a box rule sets', () => {
+    const source = withBoxes(1) // a created box sets all four
+    expect(boxGeometry(source, 'bx_1')).toEqual({ left: 0, top: 0, width: 100, height: 100 })
+  })
+
+  it('leaves out props that are missing or not in pixels, and lets the last one win', () => {
+    const source = withRule(' left: 10%; top: 5px; top: 7.5px; margin-left: 3px; ')
+    expect(boxGeometry(source, 'bx_1')).toEqual({ top: 7.5 })
+  })
+
+  it('is empty for a box with no rule, or no such box', () => {
+    expect(boxGeometry(withRule('').replace(/\.box-1 \{\}/, ''), 'bx_1')).toEqual({})
+    expect(boxGeometry(DEFAULT_SOURCE, 'bx_1')).toEqual({})
+  })
+})
+
+describe('setBoxGeometry', () => {
+  it('replaces only the values, leaving every other byte alone', () => {
+    const source = withBoxes(1)
+    const next = setBoxGeometry(source, 'bx_1', { left: 40, top: 50 })
+
+    expect(boxGeometry(next, 'bx_1')).toEqual({ left: 40, top: 50, width: 100, height: 100 })
+    expect(next).toBe(source.replace('left: 0px', 'left: 40px').replace('top: 0px', 'top: 50px'))
+  })
+
+  it('rounds to whole pixels', () => {
+    const next = setBoxGeometry(withBoxes(1), 'bx_1', { width: 120.6 })
+    expect(boxGeometry(next, 'bx_1').width).toBe(121)
+  })
+
+  it('never touches margin-left, padding-top or a prop it was not given', () => {
+    const source = withRule(
+      '\n        margin-left: 4px;\n        padding-top: 2px;\n        left: 1px;\n        color: red;\n      ',
+    )
+    const next = setBoxGeometry(source, 'bx_1', { left: 9 })
+    expect(ruleBodyOf(next)).toBe(
+      '\n        margin-left: 4px;\n        padding-top: 2px;\n        left: 9px;\n        color: red;\n      ',
+    )
+  })
+
+  it('appends missing props one per line, in the rule’s own indentation', () => {
+    const source = withRule('\n        position: absolute;\n        color: red\n      ')
+    const next = setBoxGeometry(source, 'bx_1', { left: 1, top: 2, width: 3, height: 4 })
+    expect(ruleBodyOf(next)).toBe(
+      '\n        position: absolute;\n        color: red;' +
+        '\n        left: 1px;\n        top: 2px;\n        width: 3px;\n        height: 4px;' +
+        '\n      ',
+    )
+  })
+
+  it('appends inline to a one-line rule', () => {
+    const next = setBoxGeometry(withRule(' color: red '), 'bx_1', { width: 30 })
+    expect(ruleBodyOf(next)).toBe(' color: red; width: 30px; ')
+  })
+
+  it('updates an existing prop and appends a missing one in the same edit', () => {
+    const next = setBoxGeometry(withRule(' left: 1px; '), 'bx_1', { left: 5, top: 6 })
+    expect(ruleBodyOf(next)).toBe(' left: 5px; top: 6px; ')
+  })
+
+  it('re-creates a hand-deleted rule to write into', () => {
+    const source = withRule('').replace(/\s*\.box-1 \{\}/, '')
+    const next = setBoxGeometry(source, 'bx_1', { left: 10, top: 20 })
+    expect(boxGeometry(next, 'bx_1')).toEqual({ left: 10, top: 20 })
+  })
+
+  it('is a no-op for an unknown box', () => {
+    expect(setBoxGeometry(DEFAULT_SOURCE, 'bx_3', { left: 1 })).toBe(DEFAULT_SOURCE)
+  })
+})
+
+describe('moveResizeBox', () => {
+  const rect = (left: number, top: number, width: number, height: number) => ({
+    left,
+    top,
+    width,
+    height,
+  })
+
+  it('moves a box by rewriting left and top only', () => {
+    const source = withBoxes(1)
+    const next = moveResizeBox(source, 'bx_1', rect(0, 0, 100, 100), rect(30, 45, 100, 100))
+    expect(boxGeometry(next, 'bx_1')).toEqual({ left: 30, top: 45, width: 100, height: 100 })
+  })
+
+  it('applies the drag on top of the source value, so borders and padding never make it jump', () => {
+    // The rendered rect includes a 10px border the CSS width doesn't.
+    const source = withRule(' left: 5px; top: 5px; width: 50px; height: 50px; border: 10px solid; ')
+    const next = moveResizeBox(source, 'bx_1', rect(5, 5, 70, 70), rect(5, 5, 90, 70))
+    expect(boxGeometry(next, 'bx_1')).toEqual({ left: 5, top: 5, width: 70, height: 50 })
+    expect(ruleBodyOf(next)).toBe(' left: 5px; top: 5px; width: 70px; height: 50px; border: 10px solid; ')
+  })
+
+  it('resizing from the left edge rewrites left and width together', () => {
+    const next = moveResizeBox(withBoxes(1), 'bx_1', rect(0, 0, 100, 100), rect(20, 0, 80, 100))
+    expect(boxGeometry(next, 'bx_1')).toEqual({ left: 20, top: 0, width: 80, height: 100 })
+  })
+
+  it('takes the rendered value where the source has none to build on', () => {
+    const source = withRule(' width: 50%; ')
+    const next = moveResizeBox(source, 'bx_1', rect(10, 10, 200, 40), rect(10, 10, 220, 40))
+    expect(ruleBodyOf(next)).toBe(' width: 220px; ')
+  })
+
+  it('leaves the source alone when nothing moved', () => {
+    const source = withBoxes(1)
+    expect(moveResizeBox(source, 'bx_1', rect(0, 0, 100, 100), rect(0.2, 0, 100, 100))).toBe(
+      source,
+    )
   })
 })

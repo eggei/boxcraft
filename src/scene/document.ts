@@ -301,6 +301,140 @@ export function ensureRule(source: string, handle: string): EnsureRuleResult {
   return { source: next, cursor, created: true }
 }
 
+/** A box's place and size in canvas pixels — the props the stage can drag. */
+export interface BoxGeometry {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+const GEOMETRY_PROPS = ['left', 'top', 'width', 'height'] as const
+
+/**
+ * Every `prop: value` declaration in a rule body. The prop must start the
+ * declaration, so `left` never matches inside `margin-left` or `padding-left`.
+ * The value stops short of its trailing whitespace, which is left as written.
+ */
+function declarations(body: string, prop: string) {
+  const re = new RegExp(`(^|[{;\\s])${prop}(\\s*:\\s*)([^;}]*?)(\\s*)(?=;|$)`, 'g')
+  return [...body.matchAll(re)].map((m) => {
+    const valueStart = m.index + m[1].length + prop.length + m[2].length
+    return { value: m[3], from: valueStart, to: valueStart + m[3].length }
+  })
+}
+
+/** The body of a class's rule: the text between its braces, and where. */
+function ruleBody(source: string, className: string) {
+  const range = ruleRangeOf(source, className)
+  if (!range) return null
+  const from = source.indexOf('{', range.from) + 1
+  const to = range.to - 1
+  return { from, to, text: source.slice(from, to), ruleFrom: range.from }
+}
+
+/**
+ * The box's `left`/`top`/`width`/`height`, where its rule sets them in plain
+ * pixels. A prop that is missing, or set in another unit, is left out — there
+ * is no number in the source to build on.
+ */
+export function boxGeometry(source: string, handle: string): Partial<BoxGeometry> {
+  const box = listBoxes(source).find((b) => b.handle === handle)
+  const body = box?.className ? ruleBody(source, box.className) : null
+  if (!body) return {}
+  const out: Partial<BoxGeometry> = {}
+  for (const prop of GEOMETRY_PROPS) {
+    // The last declaration wins in CSS, so it is the one that counts.
+    const last = declarations(body.text, prop).at(-1)
+    const px = last && /^(-?\d*\.?\d+)px$/.exec(last.value.trim())
+    if (px) out[prop] = Number(px[1])
+  }
+  return out
+}
+
+/**
+ * Write pixel values for some of a box's geometry props into its CSS rule —
+ * and touch nothing else. An existing declaration has only its value replaced
+ * (the last one, which is the one in force); a missing prop is appended to the
+ * rule in its existing style, one per line or inline. A box whose rule was
+ * hand-deleted gets one back first (see ensureRule). Returning one new source
+ * lets the editor apply it as a single undo step.
+ */
+export function setBoxGeometry(
+  source: string,
+  handle: string,
+  values: Partial<BoxGeometry>,
+): string {
+  const box = listBoxes(source).find((b) => b.handle === handle)
+  if (!box || !box.className) return source
+  const withRule = ensureRule(source, handle).source
+  const body = ruleBody(withRule, box.className)
+  if (!body) return source
+
+  let text = body.text
+  const missing: string[] = []
+  // Replace from the last prop backwards so earlier offsets stay valid.
+  const edits: { from: number; to: number; insert: string }[] = []
+  for (const prop of GEOMETRY_PROPS) {
+    const value = values[prop]
+    if (value === undefined) continue
+    const px = `${Math.round(value)}px`
+    const last = declarations(text, prop).at(-1)
+    if (last) edits.push({ from: last.from, to: last.to, insert: px })
+    else missing.push(`${prop}: ${px};`)
+  }
+  edits.sort((a, b) => b.from - a.from)
+  for (const e of edits) text = text.slice(0, e.from) + e.insert + text.slice(e.to)
+
+  if (missing.length > 0) {
+    const content = text.replace(/\s+$/, '')
+    const multiline = text.includes('\n')
+    const semi = content && !content.endsWith(';') ? ';' : ''
+    if (multiline) {
+      // Match the rule's own declarations; an empty rule indents two past the
+      // selector. The closing brace keeps its own line and indentation.
+      const lineStart = withRule.lastIndexOf('\n', body.ruleFrom) + 1
+      const ruleIndent = /^[ \t]*/.exec(withRule.slice(lineStart))![0]
+      const indent = /\n([ \t]*)\S/.exec(content)?.[1] ?? ruleIndent + '  '
+      const trailing = text.slice(content.length)
+      const closing = trailing.includes('\n')
+        ? trailing.slice(trailing.lastIndexOf('\n'))
+        : trailing
+      text = content + semi + missing.map((d) => `\n${indent}${d}`).join('') + closing
+    } else {
+      text = content + semi + missing.map((d) => ` ${d}`).join('') + ' '
+    }
+  }
+
+  return withRule.slice(0, body.from) + text + withRule.slice(body.to)
+}
+
+/**
+ * Apply a drag on the stage to a box's rule. `from` and `to` are the box's
+ * rendered rect before and after, canvas-relative; each prop moves by however
+ * far the drag moved it, on top of the value already in the source — so a
+ * border, padding or a non-default box-sizing never makes it jump. Only props
+ * the drag changed are written: a move rewrites `left`/`top`, a right-edge
+ * resize just `width`. A prop with no pixel value to build on takes the
+ * rendered one.
+ */
+export function moveResizeBox(
+  source: string,
+  handle: string,
+  from: BoxGeometry,
+  to: BoxGeometry,
+): string {
+  const current = boxGeometry(source, handle)
+  const values: Partial<BoxGeometry> = {}
+  for (const prop of GEOMETRY_PROPS) {
+    const delta = to[prop] - from[prop]
+    if (Math.round(delta) === 0) continue
+    values[prop] = (current[prop] ?? from[prop]) + delta
+  }
+  if (Object.keys(values).length === 0) return source
+  return setBoxGeometry(source, handle, values)
+}
+
 /** A box's opening-tag `id`, or null. */
 function idAttrOf(openTag: string): string | null {
   const m = openTag.match(/\bid="([^"]*)"/)

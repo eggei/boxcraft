@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Pause, Play } from 'lucide-react'
 import { WithTooltip } from '@/components/ui/tooltip'
-import { translateHandle, type BoxPlacement } from './document'
+import { translateHandle, type BoxGeometry, type BoxPlacement } from './document'
 import {
   BRIDGE_CHANNEL,
   isBridgeMessage,
   layoutOf,
   renderStage,
+  type BridgeRect,
   type StageLayout,
   type StageRequest,
 } from './stageBridge'
@@ -21,6 +22,11 @@ interface SceneStageProps {
   onCreateBox: (placement: BoxPlacement) => void
   onSelectBox: (handle: string) => void
   onAttachJs: (handle: string) => void
+  /**
+   * A box was dragged (Select tool) — moved, or resized by a handle. `from`
+   * and `to` are its rendered rect before and after, canvas-relative.
+   */
+  onMoveResizeBox: (handle: string, from: BoxGeometry, to: BoxGeometry) => void
 }
 
 interface DragState {
@@ -31,6 +37,57 @@ interface DragState {
 }
 
 const CLICK_THRESHOLD = 4 // px of travel below which a drag counts as a click
+
+/** What part of the selected box a drag grabbed: its body, or an edge/corner. */
+type GrabMode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+const GEOMETRY = ['left', 'top', 'width', 'height'] as const
+
+const RESIZE_HANDLES: { mode: GrabMode; className: string }[] = [
+  { mode: 'nw', className: '-top-1.5 -left-1.5 cursor-nwse-resize' },
+  { mode: 'n', className: '-top-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+  { mode: 'ne', className: '-top-1.5 -right-1.5 cursor-nesw-resize' },
+  { mode: 'e', className: 'top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize' },
+  { mode: 'se', className: '-right-1.5 -bottom-1.5 cursor-nwse-resize' },
+  { mode: 's', className: '-bottom-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+  { mode: 'sw', className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
+  { mode: 'w', className: 'top-1/2 -left-1.5 -translate-y-1/2 cursor-ew-resize' },
+]
+
+interface BoxDrag {
+  /** The box's handle in the render on screen. */
+  handle: string
+  mode: GrabMode
+  /** The box's rect when the drag started, iframe-relative. */
+  rect: BridgeRect
+  startX: number
+  startY: number
+  x: number
+  y: number
+}
+
+/**
+ * The rect a drag has produced so far: the body moves the whole box, an edge
+ * or corner moves just its sides. A side can't be dragged past the opposite
+ * one — the box bottoms out at 1px rather than turning inside out.
+ */
+function draggedRect({ rect, mode, startX, startY, x, y }: BoxDrag): BridgeRect {
+  const dx = x - startX
+  const dy = y - startY
+  if (mode === 'move') return { ...rect, left: rect.left + dx, top: rect.top + dy }
+  let { left, top, width, height } = rect
+  if (mode.includes('e')) width = Math.max(1, width + dx)
+  if (mode.includes('s')) height = Math.max(1, height + dy)
+  if (mode.includes('w')) {
+    width = Math.max(1, rect.width - dx)
+    left = rect.left + rect.width - width
+  }
+  if (mode.includes('n')) {
+    height = Math.max(1, rect.height - dy)
+    top = rect.top + rect.height - height
+  }
+  return { left, top, width, height }
+}
 
 /**
  * The rendered scene: a sandboxed iframe of the instrumented source (its
@@ -44,6 +101,10 @@ const CLICK_THRESHOLD = 4 // px of travel below which a drag counts as a click
  * (JS tool). The selection outline is drawn on an overlay layer, never
  * injected into the source.
  *
+ * With the Select tool, the selected box's outline doubles as a drag frame:
+ * dragging its body moves the box, its handles resize it. Feedback is the
+ * outline alone; the box's rule is rewritten once, on drop.
+ *
  * Scripts run with every loop guarded (see loopGuard.ts). While a script
  * doesn't parse — usually because it is half-typed — the stage keeps showing
  * the last render that did, with a quiet notice; and scripts can be paused
@@ -56,9 +117,11 @@ export function SceneStage({
   onCreateBox,
   onSelectBox,
   onAttachJs,
+  onMoveResizeBox,
 }: SceneStageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [boxDrag, setBoxDrag] = useState<BoxDrag | null>(null)
   /** The latest geometry the bridge reported, in iframe coordinates. */
   const [layout, setLayout] = useState<StageLayout | null>(null)
   const [scriptsPaused, setScriptsPaused] = useState(false)
@@ -232,9 +295,50 @@ export function SceneStage({
   )
 
   // Coordinates are iframe-relative and the overlay layer is aligned to the
-  // iframe, so a reported rect is used as is.
+  // iframe, so a reported rect is used as is. Mid-drag, the outline follows
+  // the pointer instead; the source is only rewritten on drop.
   const shownSelected = toShown(selectedHandle)
-  const outline = shownSelected ? layout?.boxes[shownSelected] : undefined
+  const measured = shownSelected ? layout?.boxes[shownSelected] : undefined
+  const outline = boxDrag ? draggedRect(boxDrag) : measured
+  const canDragBox = tool === 'select' && !!shownSelected && !!measured
+
+  // Select-tool drags on the selected box: its body moves it, the handles
+  // resize it. The pointer is captured, so moves and the drop arrive here
+  // even once it has left the frame.
+  function onBoxPointerDown(mode: GrabMode, event: ReactPointerEvent) {
+    if (!canDragBox) return
+    event.stopPropagation()
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setBoxDrag({
+      handle: shownSelected,
+      mode,
+      rect: measured,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+    })
+  }
+
+  function onBoxPointerMove(event: ReactPointerEvent) {
+    if (!boxDrag) return
+    setBoxDrag({ ...boxDrag, x: event.clientX, y: event.clientY })
+  }
+
+  function onBoxPointerUp() {
+    if (!boxDrag) return
+    setBoxDrag(null)
+    const to = draggedRect(boxDrag)
+    const from = boxDrag.rect
+    if (GEOMETRY.every((prop) => Math.round(to[prop] - from[prop]) === 0)) return
+    const handle = fromShown(boxDrag.handle)
+    if (!handle) return
+    // Canvas-relative, the frame the box's left/top are written in.
+    const origin = layout?.canvas ?? { left: 0, top: 0 }
+    const relative = (r: BridgeRect) => ({ ...r, left: r.left - origin.left, top: r.top - origin.top })
+    onMoveResizeBox(handle, relative(from), relative(to))
+  }
 
   return (
     <div className="bg-muted/30 relative h-full w-full">
@@ -281,14 +385,35 @@ export function SceneStage({
       {outline && (
         <div
           data-testid="selection-outline"
-          className="ring-primary pointer-events-none absolute z-10 ring-2"
+          className={
+            'ring-primary absolute z-10 ring-2 ' +
+            // With the Select tool the outline is the drag frame; otherwise
+            // clicks pass through it to the scene.
+            (canDragBox ? 'cursor-move touch-none' : 'pointer-events-none')
+          }
           style={{
             left: outline.left,
             top: outline.top,
             width: outline.width,
             height: outline.height,
           }}
-        />
+          onPointerDown={(event) => onBoxPointerDown('move', event)}
+          onPointerMove={onBoxPointerMove}
+          onPointerUp={onBoxPointerUp}
+          onPointerCancel={() => setBoxDrag(null)}
+        >
+          {canDragBox &&
+            RESIZE_HANDLES.map(({ mode, className }) => (
+              <div
+                key={mode}
+                data-testid={`resize-${mode}`}
+                className={
+                  'bg-background border-primary absolute size-3 rounded-sm border ' + className
+                }
+                onPointerDown={(event) => onBoxPointerDown(mode, event)}
+              />
+            ))}
+        </div>
       )}
 
       {tool === 'box' && (
