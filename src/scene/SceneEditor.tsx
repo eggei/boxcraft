@@ -25,12 +25,16 @@ import {
   resolveTokens,
   ruleRangeOf,
   type BoxPlacement,
+  type CreateBoxProblem,
   type TokenRange,
 } from "./document";
 
 export interface SceneEditorHandle {
-  /** Insert a box at `placement` and land the cursor inside its new rule. */
-  createBox: (placement: BoxPlacement) => void;
+  /**
+   * Insert a box at `placement` and land the cursor inside its new rule.
+   * Returns why it couldn't (no canvas, no `<style>`…), or null on success.
+   */
+  createBox: (placement: BoxPlacement) => CreateBoxProblem | null;
   /** Select a box: ensure it has a rule, scroll to it, land the cursor inside. */
   selectBox: (handle: string) => void;
   /** Rename a box everywhere in one undo step. */
@@ -260,9 +264,12 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
     return {
       createBox(placement) {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view) return null;
         const source = view.state.doc.toString();
         const result = createBox(source, placement);
+        // Nowhere to draw: leave the document and the editor's mode alone and
+        // let the host explain what's missing.
+        if (!result.ok) return result.problem;
         startInsertMode(view);
         view.dispatch({
           changes: { from: 0, to: source.length, insert: result.source },
@@ -271,6 +278,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
         });
         view.focus();
         onChangeRef.current(result.source);
+        return null;
       },
 
       selectBox(handleId) {

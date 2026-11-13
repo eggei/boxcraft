@@ -175,3 +175,40 @@ describe("SceneEditorPane Vim mode", () => {
     expect(onChange).toHaveBeenCalledWith(DEFAULT_SOURCE);
   });
 });
+
+describe("SceneEditorPane Box tool notice", () => {
+  beforeEach(() => localStorage.clear());
+
+  const NO_CANVAS = DEFAULT_SOURCE.replace('<div class="canvas"></div>', "<div></div>");
+  const NOTICE = 'Add an element with class="canvas" to draw boxes';
+
+  it("explains why boxes can't be drawn when the scene has no canvas", async () => {
+    const user = userEvent.setup();
+    render(<SceneEditorPane source={NO_CANVAS} onChange={vi.fn()} />);
+    expect(screen.queryByText(NOTICE)).toBeNull(); // only while the Box tool is armed
+
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it("drops the notice as soon as the source gains a canvas", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SceneEditorPane source={NO_CANVAS} onChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.getByText(NOTICE)).toBeVisible();
+
+    rerender(<SceneEditorPane source={DEFAULT_SOURCE} onChange={vi.fn()} />);
+
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it("shows nothing for a scene that can take a box", async () => {
+    const user = userEvent.setup();
+    render(<SceneEditorPane source={DEFAULT_SOURCE} onChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Box" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

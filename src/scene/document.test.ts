@@ -4,6 +4,7 @@ import {
   attachJs,
   boxAtOffset,
   createBox,
+  createBoxProblem,
   detachJs,
   ensureRule,
   instrument,
@@ -12,13 +13,21 @@ import {
   resolveTokens,
   ruleRangeOf,
   serialize,
+  type BoxPlacement,
 } from './document'
+
+/** createBox in a document that can take a box; fails the test otherwise. */
+function placeBox(source: string, placement: BoxPlacement) {
+  const result = createBox(source, placement)
+  if (!result.ok) throw new Error(`createBox failed: ${result.problem}`)
+  return result
+}
 
 /** DEFAULT_SOURCE with `n` boxes created in order, for identity-layer tests. */
 function withBoxes(n: number): string {
   let source = DEFAULT_SOURCE
   for (let i = 0; i < n; i++) {
-    source = createBox(source, { kind: 'point', x: i * 10, y: i * 10 }).source
+    source = placeBox(source, { kind: 'point', x: i * 10, y: i * 10 }).source
   }
   return source
 }
@@ -33,7 +42,7 @@ function parse(source: string): Document {
 
 describe('createBox', () => {
   it('drops a div into the canvas with a generated class', () => {
-    const { source, className } = createBox(DEFAULT_SOURCE, {
+    const { source, className } = placeBox(DEFAULT_SOURCE, {
       kind: 'point',
       x: 20,
       y: 30,
@@ -51,7 +60,7 @@ describe('createBox', () => {
   })
 
   it('appends a canvas-relative starter rule to the end of <style>', () => {
-    const { source } = createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
+    const { source } = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
 
     const doc = parse(source)
     const styleText = doc.querySelector('style')?.textContent ?? ''
@@ -72,7 +81,7 @@ describe('createBox', () => {
   })
 
   it('sizes a box to the marquee rect when given one', () => {
-    const { source } = createBox(DEFAULT_SOURCE, {
+    const { source } = placeBox(DEFAULT_SOURCE, {
       kind: 'rect',
       left: 12,
       top: 8,
@@ -88,7 +97,7 @@ describe('createBox', () => {
   })
 
   it('lands the cursor on an empty line inside the new rule', () => {
-    const { source, cursor } = createBox(DEFAULT_SOURCE, {
+    const { source, cursor } = placeBox(DEFAULT_SOURCE, {
       kind: 'point',
       x: 0,
       y: 0,
@@ -108,14 +117,42 @@ describe('createBox', () => {
   })
 
   it('numbers boxes by the highest existing box number', () => {
-    const first = createBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
-    const second = createBox(first.source, { kind: 'point', x: 10, y: 10 })
+    const first = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
+    const second = placeBox(first.source, { kind: 'point', x: 10, y: 10 })
 
     expect(second.className).toBe('box-2')
 
     const doc = parse(second.source)
     expect(doc.querySelectorAll('.canvas > div')).toHaveLength(2)
     expect(doc.querySelector('.box-2')).not.toBeNull()
+  })
+})
+
+describe('createBox without somewhere to draw', () => {
+  const point: BoxPlacement = { kind: 'point', x: 0, y: 0 }
+
+  it('reports a missing canvas instead of throwing', () => {
+    const source = DEFAULT_SOURCE.replace('<div class="canvas"></div>', '<div></div>')
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'no-canvas' })
+    expect(createBoxProblem(source)).toBe('no-canvas')
+  })
+
+  it('reports a canvas that is still missing its closing tag', () => {
+    const source = DEFAULT_SOURCE.replace(
+      '<div class="canvas"></div>\n  </body>\n</html>\n',
+      '<div class="canvas">',
+    )
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'unterminated-canvas' })
+  })
+
+  it('reports a missing <style> block', () => {
+    const source = DEFAULT_SOURCE.replace(/<style>[\s\S]*<\/style>/, '')
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'no-style' })
+    expect(createBoxProblem(source)).toBe('no-style')
+  })
+
+  it('reports no problem for a drawable document', () => {
+    expect(createBoxProblem(DEFAULT_SOURCE)).toBeNull()
   })
 })
 
@@ -174,7 +211,7 @@ ${classes.map((c) => `      .${c} { color: red; }`).join('\n')}
 
     for (const source of [single, bare]) {
       expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
-      const doc = parse(createBox(source, { kind: 'point', x: 0, y: 0 }).source)
+      const doc = parse(placeBox(source, { kind: 'point', x: 0, y: 0 }).source)
       expect(doc.querySelector('.box-2')?.parentElement).toBe(doc.querySelector('.canvas'))
     }
   })
@@ -200,7 +237,7 @@ ${classes.map((c) => `      .${c} { color: red; }`).join('\n')}
     )
     expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
     // ...and a new box still lands inside the canvas, after the real child.
-    const placed = createBox(source, { kind: 'point', x: 0, y: 0 }).source
+    const placed = placeBox(source, { kind: 'point', x: 0, y: 0 }).source
     expect(parse(placed).querySelectorAll('.canvas > div')).toHaveLength(2)
   })
 

@@ -289,3 +289,35 @@ describe("SceneEditor Vim mode", () => {
     });
   });
 });
+
+describe("SceneEditor createBox", () => {
+  it("reports a document with no canvas instead of throwing, and leaves it alone", () => {
+    const noCanvas = DEFAULT_SOURCE.replace('<div class="canvas"></div>', "<div></div>");
+    const ref = createRef<SceneEditorHandle>();
+    const onChange = vi.fn();
+    const { container } = render(
+      <SceneEditor ref={ref} value={noCanvas} onChange={onChange} autoFormat={false} />,
+    );
+
+    let problem: string | null = null;
+    act(() => {
+      problem = ref.current!.createBox({ kind: "point", x: 20, y: 20 });
+    });
+
+    expect(problem).toBe("no-canvas");
+    expect(viewIn(container).state.doc.toString()).toBe(noCanvas);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("reports success as no problem", () => {
+    const ref = createRef<SceneEditorHandle>();
+    render(<SceneEditor ref={ref} value={DEFAULT_SOURCE} onChange={vi.fn()} autoFormat={false} />);
+
+    let problem: string | null = "unset";
+    act(() => {
+      problem = ref.current!.createBox({ kind: "point", x: 20, y: 20 });
+    });
+
+    expect(problem).toBeNull();
+  });
+});

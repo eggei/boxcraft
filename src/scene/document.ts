@@ -14,14 +14,29 @@ export type BoxPlacement =
   | { kind: 'point'; x: number; y: number }
   | { kind: 'rect'; left: number; top: number; width: number; height: number }
 
-export interface CreateBoxResult {
-  /** The new document source. */
-  source: string
-  /** The generated public class, e.g. `box-1`. */
-  className: string
-  /** Offset into `source` where the cursor should land — inside the new rule. */
-  cursor: number
-}
+/**
+ * Why a box can't be created in a document. The source is hand-editable, so
+ * these are ordinary states the user can be in, not programming errors.
+ */
+export type CreateBoxProblem =
+  /** No element carries a `canvas` class token — there is nowhere to draw. */
+  | 'no-canvas'
+  /** The canvas element has no closing tag yet, so there is no "inside" to append to. */
+  | 'unterminated-canvas'
+  /** No `<style>` block to hold the new box's rule. */
+  | 'no-style'
+
+export type CreateBoxResult =
+  | {
+      ok: true
+      /** The new document source. */
+      source: string
+      /** The generated public class, e.g. `box-1`. */
+      className: string
+      /** Offset into `source` where the cursor should land — inside the new rule. */
+      cursor: number
+    }
+  | { ok: false; problem: CreateBoxProblem }
 
 /** A click drops a box this size (px); a marquee overrides it with the drag. */
 const DEFAULT_BOX_SIZE = 100
@@ -157,14 +172,25 @@ function findCanvas(source: string): SyntaxNode | null {
 
 /**
  * Offset just before the canvas element's own closing tag, so a new box lands
- * as the canvas's last child.
+ * as the canvas's last child — or why there is no such place.
  */
-function canvasCloseOffset(source: string): number {
+function canvasCloseOffset(source: string): number | CreateBoxProblem {
   const canvas = findCanvas(source)
-  if (!canvas) throw new Error('createBox: no .canvas element in source')
+  if (!canvas) return 'no-canvas'
   const close = canvas.getChild('CloseTag')
-  if (!close) throw new Error('createBox: unterminated .canvas element')
+  if (!close) return 'unterminated-canvas'
   return close.from
+}
+
+/**
+ * What would stop `createBox` in this document, or null when a box can be
+ * drawn. Lets the UI explain itself before the user even tries.
+ */
+export function createBoxProblem(source: string): CreateBoxProblem | null {
+  const closeAt = canvasCloseOffset(source)
+  if (typeof closeAt !== 'number') return closeAt
+  if (source.lastIndexOf('</style>') === -1) return 'no-style'
+  return null
 }
 
 /**
@@ -515,19 +541,21 @@ export function createBox(
   source: string,
   placement: BoxPlacement,
 ): CreateBoxResult {
+  const closeAt = canvasCloseOffset(source)
+  if (typeof closeAt !== 'number') return { ok: false, problem: closeAt }
+  if (source.lastIndexOf('</style>') === -1) return { ok: false, problem: 'no-style' }
+
   const n = nextBoxNumber(source)
   const className = `box-${n}`
   const { left, top, width, height } = rectOf(placement)
 
   // 1. Insert the box div as the last child of the canvas.
-  const closeAt = canvasCloseOffset(source)
   const boxDiv = `  <div class="${className}"></div>\n    `
   let next = source.slice(0, closeAt) + boxDiv + source.slice(closeAt)
 
   // 2. Append the starter rule to the end of the <style> block. The blank line
   //    before `}` is the cursor's landing spot — ready to type the next prop.
   const styleClose = next.lastIndexOf('</style>')
-  if (styleClose === -1) throw new Error('createBox: no <style> block in source')
 
   const rule =
     `      .${className} {\n` +
@@ -543,5 +571,5 @@ export function createBox(
   const cursor = styleClose + rule.length
   next = next.slice(0, styleClose) + rule + ruleTail + next.slice(styleClose)
 
-  return { source: next, className, cursor }
+  return { ok: true, source: next, className, cursor }
 }
