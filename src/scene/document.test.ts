@@ -4,6 +4,7 @@ import {
   attachJs,
   boxAtOffset,
   createBox,
+  createBoxProblem,
   detachJs,
   ensureRule,
   instrument,
@@ -13,13 +14,23 @@ import {
   ruleRangeOf,
   serialize,
   translateHandle,
+  validateBoxName,
+  type BoxPlacement,
 } from './document'
+import { isFormatted } from './format'
+
+/** createBox in a document that can take a box; fails the test otherwise. */
+function placeBox(source: string, placement: BoxPlacement) {
+  const result = createBox(source, placement)
+  if (!result.ok) throw new Error(`createBox failed: ${result.problem}`)
+  return result
+}
 
 /** DEFAULT_SOURCE with `n` boxes created in order, for identity-layer tests. */
 function withBoxes(n: number): string {
   let source = DEFAULT_SOURCE
   for (let i = 0; i < n; i++) {
-    source = createBox(source, { kind: 'point', x: i * 10, y: i * 10 }).source
+    source = placeBox(source, { kind: 'point', x: i * 10, y: i * 10 }).source
   }
   return source
 }
@@ -34,7 +45,7 @@ function parse(source: string): Document {
 
 describe('createBox', () => {
   it('drops a div into the canvas with a generated class', () => {
-    const { source, className } = createBox(DEFAULT_SOURCE, {
+    const { source, className } = placeBox(DEFAULT_SOURCE, {
       kind: 'point',
       x: 20,
       y: 30,
@@ -52,7 +63,7 @@ describe('createBox', () => {
   })
 
   it('appends a canvas-relative starter rule to the end of <style>', () => {
-    const { source } = createBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
+    const { source } = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 20, y: 30 })
 
     const doc = parse(source)
     const styleText = doc.querySelector('style')?.textContent ?? ''
@@ -73,7 +84,7 @@ describe('createBox', () => {
   })
 
   it('sizes a box to the marquee rect when given one', () => {
-    const { source } = createBox(DEFAULT_SOURCE, {
+    const { source } = placeBox(DEFAULT_SOURCE, {
       kind: 'rect',
       left: 12,
       top: 8,
@@ -89,7 +100,7 @@ describe('createBox', () => {
   })
 
   it('lands the cursor on an empty line inside the new rule', () => {
-    const { source, cursor } = createBox(DEFAULT_SOURCE, {
+    const { source, cursor } = placeBox(DEFAULT_SOURCE, {
       kind: 'point',
       x: 0,
       y: 0,
@@ -108,15 +119,80 @@ describe('createBox', () => {
     expect(source.slice(0, cursor)).toMatch(/\n[ \t]*$/)
   })
 
+  it('puts the box on its own indented line when the canvas is a one-liner', () => {
+    // DEFAULT_SOURCE's canvas is `<div class="canvas"></div>` on one line.
+    const once = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 }).source
+    expect(once).toContain(
+      '    <div class="canvas">\n      <div class="box-1"></div>\n    </div>\n',
+    )
+
+    // A second box goes below the first, the closing tag staying put.
+    const twice = placeBox(once, { kind: 'point', x: 0, y: 0 }).source
+    expect(twice).toContain(
+      '    <div class="canvas">\n' +
+        '      <div class="box-1"></div>\n' +
+        '      <div class="box-2"></div>\n' +
+        '    </div>\n',
+    )
+  })
+
+  it('indents the new rule one level inside <style>, closing tag untouched', () => {
+    const { source } = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
+    expect(source).toContain(
+      '      .canvas { position: relative; width: 400px; height: 400px; background: #fff; }\n' +
+        '      .box-1 {\n' +
+        '        position: absolute;\n',
+    )
+    expect(source).toContain('        background: #4f46e5;\n        \n      }\n    </style>')
+  })
+
+  it('generates code already in formatted shape, bar the landing line', () => {
+    let source = DEFAULT_SOURCE
+    for (let i = 0; i < 2; i++) {
+      source = placeBox(source, { kind: 'point', x: 0, y: 0 }).source
+      // What the editor does with the landing line once it is left unused.
+      source = source.replace(/\n[ \t]+\n/, '\n')
+      expect(isFormatted(source)).toBe(true)
+    }
+  })
+
   it('numbers boxes by the highest existing box number', () => {
-    const first = createBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
-    const second = createBox(first.source, { kind: 'point', x: 10, y: 10 })
+    const first = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
+    const second = placeBox(first.source, { kind: 'point', x: 10, y: 10 })
 
     expect(second.className).toBe('box-2')
 
     const doc = parse(second.source)
     expect(doc.querySelectorAll('.canvas > div')).toHaveLength(2)
     expect(doc.querySelector('.box-2')).not.toBeNull()
+  })
+})
+
+describe('createBox without somewhere to draw', () => {
+  const point: BoxPlacement = { kind: 'point', x: 0, y: 0 }
+
+  it('reports a missing canvas instead of throwing', () => {
+    const source = DEFAULT_SOURCE.replace('<div class="canvas"></div>', '<div></div>')
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'no-canvas' })
+    expect(createBoxProblem(source)).toBe('no-canvas')
+  })
+
+  it('reports a canvas that is still missing its closing tag', () => {
+    const source = DEFAULT_SOURCE.replace(
+      '<div class="canvas"></div>\n  </body>\n</html>\n',
+      '<div class="canvas">',
+    )
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'unterminated-canvas' })
+  })
+
+  it('reports a missing <style> block', () => {
+    const source = DEFAULT_SOURCE.replace(/<style>[\s\S]*<\/style>/, '')
+    expect(createBox(source, point)).toEqual({ ok: false, problem: 'no-style' })
+    expect(createBoxProblem(source)).toBe('no-style')
+  })
+
+  it('reports no problem for a drawable document', () => {
+    expect(createBoxProblem(DEFAULT_SOURCE)).toBeNull()
   })
 })
 
@@ -140,6 +216,90 @@ describe('listBoxes', () => {
 
   it('returns no boxes for a bare canvas', () => {
     expect(listBoxes(DEFAULT_SOURCE)).toEqual([])
+  })
+})
+
+describe('canvas and box scanning', () => {
+  /** A scene whose body is `body`, with one rule per class in `classes`. */
+  const scene = (body: string, classes: string[] = []) => `<!doctype html>
+<html>
+  <head>
+    <style>
+${classes.map((c) => `      .${c} { color: red; }`).join('\n')}
+    </style>
+  </head>
+  <body>
+    ${body}
+  </body>
+</html>
+`
+
+  it('treats any element directly under the canvas as a box, not just divs', () => {
+    const source = scene(
+      '<div class="canvas"><span class="box-1"></span><section class="box-2"></section></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1', 'box-2'])
+
+    const doc = parse(instrument(source))
+    expect(doc.querySelector('span.box-1')?.getAttribute('data-bc')).toBe('bx_1')
+    expect(doc.querySelector('section.box-2')?.getAttribute('data-bc')).toBe('bx_2')
+  })
+
+  it("finds a canvas whose class is single-quoted or unquoted", () => {
+    const single = scene(`<div class='canvas'><div class='box-1'></div></div>`)
+    const bare = scene('<div class=canvas><div class=box-1></div></div>')
+
+    for (const source of [single, bare]) {
+      expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+      const doc = parse(placeBox(source, { kind: 'point', x: 0, y: 0 }).source)
+      expect(doc.querySelector('.box-2')?.parentElement).toBe(doc.querySelector('.canvas'))
+    }
+  })
+
+  it('matches the canvas by whole class token only', () => {
+    const source = scene(
+      '<div class="canvas-wrap"><div class="box-9"></div></div>' +
+        '<div class="stage canvas"><div class="box-1"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+  })
+
+  it("counts only the canvas's direct children, not nested elements", () => {
+    const source = scene(
+      '<div class="canvas"><div class="box-1"><div class="eye"></div><span class="pupil"></span></div><div class="box-2"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1', 'box-2'])
+  })
+
+  it('is not fooled by `<div` inside comments or attribute values', () => {
+    const source = scene(
+      '<div class="canvas"><!-- <div class="ghost"> --><div class="box-1" title="<div>"></div></div>',
+    )
+    expect(listBoxes(source).map((b) => b.className)).toEqual(['box-1'])
+    // ...and a new box still lands inside the canvas, after the real child.
+    const placed = placeBox(source, { kind: 'point', x: 0, y: 0 }).source
+    expect(parse(placed).querySelectorAll('.canvas > div')).toHaveLength(2)
+  })
+
+  it('renames and wires single-quoted boxes in place', () => {
+    const source = scene(`<div class="canvas"><span class='box-1'></span></div>`, ['box-1'])
+    const handle = listBoxes(source)[0].handle
+
+    const renamed = rename(source, handle, 'hero').source
+    expect(renamed).toContain(`<span class='hero'>`)
+    expect(renamed).toContain('.hero {')
+
+    const attached = attachJs(renamed, handle).source
+    expect(parse(attached).querySelector('span.hero')?.id).toBe('hero')
+
+    const detached = detachJs(attached, handle).source
+    expect(detached).toContain(`<span class='hero'>`)
+  })
+
+  it('adds an id before the `/>` of a self-closing box', () => {
+    const source = scene('<div class="canvas"><img class="box-1" /></div>', ['box-1'])
+    const attached = attachJs(source, listBoxes(source)[0].handle).source
+    expect(attached).toContain('<img class="box-1" id="box-1" />')
   })
 })
 
@@ -257,6 +417,77 @@ describe('rename', () => {
     const doc = parse(renamed)
     expect(doc.querySelector('.hero')).not.toBeNull()
     expect(doc.querySelector('.box-2')).not.toBeNull() // sibling untouched
+  })
+
+  it('refuses a name another box already has, leaving the source alone', () => {
+    const source = withBoxes(2)
+    const result = rename(source, handleOf(source, 'box-1'), 'box-2')
+
+    expect(result.problem).toBe('taken')
+    expect(result.source).toBe(source)
+    expect(listBoxes(result.source)).toHaveLength(2) // nothing merged
+  })
+
+  it('refuses names that would break the markup or the selector', () => {
+    const source = withBoxes(1)
+    for (const name of ['my box', 'a"b', '1st', '--x', 'a.b']) {
+      const result = rename(source, handleOf(source, 'box-1'), name)
+      expect(result.problem).toBe('invalid')
+      expect(result.source).toBe(source)
+    }
+  })
+
+  it('trims surrounding whitespace from an accepted name', () => {
+    const source = withBoxes(1)
+    const { source: renamed, problem } = rename(source, handleOf(source, 'box-1'), '  hero ')
+    expect(problem).toBeUndefined()
+    expect(parse(renamed).querySelector('.hero')).not.toBeNull()
+  })
+})
+
+describe('validateBoxName', () => {
+  const handleOf = (source: string, className: string) =>
+    listBoxes(source).find((b) => b.className === className)!.handle
+
+  it('accepts a fresh CSS identifier, including leading - and _', () => {
+    const source = withBoxes(1)
+    const handle = handleOf(source, 'box-1')
+    for (const name of ['hero', '_hero', '-hero', 'hero-2', 'Hero_Two']) {
+      expect(validateBoxName(source, handle, name)).toBeNull()
+    }
+  })
+
+  it('accepts the box keeping its own name', () => {
+    const source = withBoxes(1)
+    expect(validateBoxName(source, handleOf(source, 'box-1'), 'box-1')).toBeNull()
+  })
+
+  it('reports an empty name', () => {
+    const source = withBoxes(1)
+    expect(validateBoxName(source, handleOf(source, 'box-1'), '   ')).toBe('empty')
+  })
+
+  it('refuses any class already used as a selector in the styles', () => {
+    const source = withBoxes(1).replace(
+      '</style>',
+      '  .glow:hover, .card > .title { color: red; }\n    </style>',
+    )
+    const handle = handleOf(source, 'box-1')
+    for (const name of ['canvas', 'glow', 'card', 'title']) {
+      expect(validateBoxName(source, handle, name)).toBe('taken')
+    }
+  })
+
+  it("refuses another box's extra class, but not names that only appear in script", () => {
+    const base = withBoxes(2).replace('class="box-2"', 'class="box-2 active"')
+    const source = attachJs(base, handleOf(base, 'box-1')).source.replace(
+      '</script>',
+      '  box1.style.color = "red";\n    </script>',
+    )
+    const handle = handleOf(source, 'box-1')
+    expect(validateBoxName(source, handle, 'active')).toBe('taken')
+    // `.style` in JS is a property access, not a class in use.
+    expect(validateBoxName(source, handle, 'style')).toBeNull()
   })
 })
 
@@ -394,6 +625,54 @@ describe('detachJs', () => {
   it('is a no-op for a box that has no JS', () => {
     const source = withBoxes(1)
     expect(detachJs(source, listBoxes(source)[0].handle).source).toBe(source)
+  })
+
+  it('keeps the script when user code without `const` remains in it', () => {
+    const base = withBoxes(1)
+    const handle = listBoxes(base)[0].handle
+    // The user's own code below the wiring, written without any `const`.
+    const attached = attachJs(base, handle).source.replace(
+      '</script>',
+      "  box1.addEventListener('click', () => alert('hi'));\n    </script>",
+    )
+
+    const { source: detached } = detachJs(attached, handle)
+
+    expect(detached).not.toContain("getElementById('box-1')")
+    const scripts = parse(detached).querySelectorAll('script')
+    expect(scripts).toHaveLength(1)
+    expect(scripts[0].textContent).toContain("box1.addEventListener('click'")
+  })
+
+  it('keeps the script while another box is still wired', () => {
+    let source = withBoxes(2)
+    const [b1, b2] = listBoxes(source)
+    source = attachJs(source, b1.handle).source
+    source = attachJs(source, b2.handle).source
+
+    // Detach both, one at a time: the script survives the first, not the last.
+    const once = detachJs(source, b2.handle).source
+    expect(parse(once).querySelectorAll('script')).toHaveLength(1)
+    expect(once).toContain("getElementById('box-1')")
+
+    const twice = detachJs(once, b1.handle).source
+    expect(parse(twice).querySelectorAll('script')).toHaveLength(0)
+    // Removing the block leaves no blank line where it stood.
+    expect(twice).not.toMatch(/\n[ \t]*\n[ \t]*<\/body>/)
+  })
+
+  it('removes only its own wiring line, never other getElementById lines', () => {
+    const base = withBoxes(1)
+    const handle = listBoxes(base)[0].handle
+    const attached = attachJs(base, handle).source.replace(
+      '</script>',
+      "  const title = document.getElementById('title');\n    </script>",
+    )
+
+    const { source: detached } = detachJs(attached, handle)
+
+    expect(detached).not.toContain("getElementById('box-1')")
+    expect(detached).toContain("const title = document.getElementById('title');")
   })
 })
 

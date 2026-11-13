@@ -6,19 +6,37 @@
  * on top of this; they hold no parallel model.
  */
 
+import { parser as htmlParser } from '@lezer/html'
+import type { SyntaxNode } from '@lezer/common'
+
 /** Where a new box goes, in canvas-relative pixels. */
 export type BoxPlacement =
   | { kind: 'point'; x: number; y: number }
   | { kind: 'rect'; left: number; top: number; width: number; height: number }
 
-export interface CreateBoxResult {
-  /** The new document source. */
-  source: string
-  /** The generated public class, e.g. `box-1`. */
-  className: string
-  /** Offset into `source` where the cursor should land — inside the new rule. */
-  cursor: number
-}
+/**
+ * Why a box can't be created in a document. The source is hand-editable, so
+ * these are ordinary states the user can be in, not programming errors.
+ */
+export type CreateBoxProblem =
+  /** No element carries a `canvas` class token — there is nowhere to draw. */
+  | 'no-canvas'
+  /** The canvas element has no closing tag yet, so there is no "inside" to append to. */
+  | 'unterminated-canvas'
+  /** No `<style>` block to hold the new box's rule. */
+  | 'no-style'
+
+export type CreateBoxResult =
+  | {
+      ok: true
+      /** The new document source. */
+      source: string
+      /** The generated public class, e.g. `box-1`. */
+      className: string
+      /** Offset into `source` where the cursor should land — inside the new rule. */
+      cursor: number
+    }
+  | { ok: false; problem: CreateBoxProblem }
 
 /** A click drops a box this size (px); a marquee overrides it with the drag. */
 const DEFAULT_BOX_SIZE = 100
@@ -43,23 +61,69 @@ function nextBoxNumber(source: string): number {
   return max + 1
 }
 
-/**
- * Offset just before the canvas element's own closing `</div>`, found by
- * depth-counting nested divs so boxes nest correctly as canvas children.
- */
-function canvasCloseOffset(source: string): number {
-  const open = source.search(/<div[^>]*class="[^"]*\bcanvas\b[^"]*"[^>]*>/)
-  if (open === -1) throw new Error('createBox: no .canvas element in source')
-  const openEnd = source.indexOf('>', open) + 1
+/** One level of nesting in generated code — matches the formatter's unit. */
+const INDENT = '  '
 
-  let depth = 1
-  const tag = /<div\b|<\/div>/g
-  tag.lastIndex = openEnd
-  for (let m = tag.exec(source); m; m = tag.exec(source)) {
-    depth += m[0] === '</div>' ? -1 : 1
-    if (depth === 0) return m.index
+/** The leading whitespace of the line that holds `offset`. */
+function indentOfLine(source: string, offset: number): string {
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1
+  return /^[ \t]*/.exec(source.slice(lineStart))![0]
+}
+
+/**
+ * Insert `block` (whole lines, already indented, no trailing newline) just
+ * inside an element, before its closing tag at `closeAt`, so the block always
+ * sits on lines of its own. When the closing tag already starts its line, the
+ * block goes above it; when it shares a line with other content — a one-liner
+ * like `<div class="canvas"></div>` — the tag is pushed onto a fresh line at
+ * `closeIndent` (the opening tag's indent). Returns where the block starts.
+ */
+function insertBeforeClose(
+  source: string,
+  closeAt: number,
+  closeIndent: string,
+  block: string,
+): { source: string; at: number } {
+  const lineStart = source.lastIndexOf('\n', closeAt - 1) + 1
+  if (/^[ \t]*$/.test(source.slice(lineStart, closeAt))) {
+    return {
+      source: source.slice(0, lineStart) + block + '\n' + source.slice(lineStart),
+      at: lineStart,
+    }
   }
-  throw new Error('createBox: unterminated .canvas element')
+  // Drop any padding before the tag rather than leave it trailing a line.
+  let cut = closeAt
+  while (cut > lineStart && /[ \t]/.test(source[cut - 1])) cut--
+  return {
+    source: source.slice(0, cut) + '\n' + block + '\n' + closeIndent + source.slice(closeAt),
+    at: cut + 1,
+  }
+}
+
+/**
+ * Append a CSS rule to the end of the last `<style>` block, indented one level
+ * inside the `<style>` tag. `body` is the rule's declaration lines without
+ * indentation; a final empty entry becomes the cursor's landing line — an
+ * indented blank line, ready to type the next property. Returns null when the
+ * document has no `<style>`; otherwise the cursor sits at the end of the rule's
+ * last body line.
+ */
+function appendRule(
+  source: string,
+  className: string,
+  body: string[],
+): { source: string; cursor: number } | null {
+  const styleClose = source.lastIndexOf('</style>')
+  if (styleClose === -1) return null
+  const styleOpen = source.lastIndexOf('<style', styleClose)
+  const styleIndent = indentOfLine(source, styleOpen === -1 ? styleClose : styleOpen)
+  const ruleIndent = styleIndent + INDENT
+  const declIndent = ruleIndent + INDENT
+
+  const head = `${ruleIndent}.${className} {\n` + body.map((l) => declIndent + l).join('\n')
+  const block = `${head}\n${ruleIndent}}`
+  const placed = insertBeforeClose(source, styleClose, styleIndent, block)
+  return { source: placed.source, cursor: placed.at + head.length }
 }
 
 /**
@@ -74,49 +138,140 @@ export interface Box {
   className: string
 }
 
+/** One attribute of an opening tag, with source offsets. */
+interface RawAttr {
+  /** Lower-cased attribute name (HTML attribute names are case-insensitive). */
+  name: string
+  /** The value as written, without its quotes ('' for a bare attribute). */
+  value: string
+  /** Offset of the attribute's first character (its name). */
+  from: number
+  /** Offset just past the attribute (past the closing quote, if any). */
+  to: number
+  /** Offset where the value starts, inside any quotes. */
+  valueFrom: number
+}
+
 interface RawBox {
   /** Offset of the `<` of the opening tag. */
   openStart: number
-  /** Offset just after the `>` of the opening tag. */
+  /** Offset just after the `>` (or `/>`) of the opening tag. */
   openEnd: number
-  /** The full opening tag text, e.g. `<div class="box-1">`. */
-  openTag: string
+  /** Offset just after the tag name — an attribute can always go here. */
+  tagNameEnd: number
+  /** Offset of the tag's closing `>` or `/>` — where an attribute is appended. */
+  endTagStart: number
+  attrs: RawAttr[]
+}
+
+function attrsOf(source: string, tag: SyntaxNode): RawAttr[] {
+  const attrs: RawAttr[] = []
+  for (const attr of tag.getChildren('Attribute')) {
+    const nameNode = attr.getChild('AttributeName')
+    if (!nameNode) continue
+    const quoted = attr.getChild('AttributeValue')
+    const bare = attr.getChild('UnquotedAttributeValue')
+    let value = ''
+    let valueFrom = attr.to
+    if (quoted) {
+      // The node spans the quotes; strip whichever quote style was used.
+      const text = source.slice(quoted.from, quoted.to)
+      const closed = text.length > 1 && text[text.length - 1] === text[0]
+      valueFrom = quoted.from + 1
+      value = text.slice(1, closed ? -1 : undefined)
+    } else if (bare) {
+      valueFrom = bare.from
+      value = source.slice(bare.from, bare.to)
+    }
+    attrs.push({
+      name: source.slice(nameNode.from, nameNode.to).toLowerCase(),
+      value,
+      from: attr.from,
+      to: attr.to,
+      valueFrom,
+    })
+  }
+  return attrs
+}
+
+/** Read an element's opening tag; null while it is still being typed. */
+function rawBoxOf(source: string, element: SyntaxNode): RawBox | null {
+  const tag = element.getChild('OpenTag') ?? element.getChild('SelfClosingTag')
+  const tagName = tag?.getChild('TagName')
+  const endTag = tag?.getChild('EndTag')
+  if (!tag || !tagName || !endTag) return null
+  return {
+    openStart: tag.from,
+    openEnd: endTag.to,
+    tagNameEnd: tagName.to,
+    endTagStart: endTag.from,
+    attrs: attrsOf(source, tag),
+  }
+}
+
+function attrOf(raw: RawBox, name: string): RawAttr | undefined {
+  return raw.attrs.find((a) => a.name === name)
+}
+
+function classAttrOf(raw: RawBox): string | null {
+  return attrOf(raw, 'class')?.value ?? null
 }
 
 /**
- * Scan the direct children of the canvas (flat boxes — no nesting in MVP),
- * returning each box's opening-tag range and text in document order.
+ * The canvas `Element` node: the first element carrying a `canvas` class token,
+ * however the attribute is quoted (or not). Parsing rather than pattern
+ * matching means comments, script/style text and attribute values that merely
+ * contain `<div` or `canvas` never confuse the scan.
  */
-function scanBoxes(source: string): RawBox[] {
-  const open = source.search(/<div[^>]*class="[^"]*\bcanvas\b[^"]*"[^>]*>/)
-  if (open === -1) return []
-  const canvasOpenEnd = source.indexOf('>', open) + 1
-
-  const boxes: RawBox[] = []
-  let depth = 1
-  const tag = /<div\b[^>]*>|<\/div>/g
-  tag.lastIndex = canvasOpenEnd
-  for (let m = tag.exec(source); m; m = tag.exec(source)) {
-    if (m[0] === '</div>') {
-      depth -= 1
-      if (depth === 0) break // reached the canvas's own closing tag
-    } else {
-      if (depth === 1) {
-        boxes.push({
-          openStart: m.index,
-          openEnd: m.index + m[0].length,
-          openTag: m[0],
-        })
-      }
-      depth += 1
+function findCanvas(source: string): SyntaxNode | null {
+  const cursor = htmlParser.parse(source).cursor()
+  do {
+    if (cursor.name !== 'Element') continue
+    const raw = rawBoxOf(source, cursor.node)
+    if (raw && (classAttrOf(raw) ?? '').split(/\s+/).includes('canvas')) {
+      return cursor.node
     }
-  }
-  return boxes
+  } while (cursor.next())
+  return null
 }
 
-function classAttrOf(openTag: string): string | null {
-  const m = openTag.match(/\bclass="([^"]*)"/)
-  return m ? m[1] : null
+/**
+ * Where the canvas element opens, and the offset just before its own closing
+ * tag (so a new box lands as its last child) — or why there is no such place.
+ */
+function canvasSpan(source: string): { openStart: number; closeAt: number } | CreateBoxProblem {
+  const canvas = findCanvas(source)
+  if (!canvas) return 'no-canvas'
+  const close = canvas.getChild('CloseTag')
+  if (!close) return 'unterminated-canvas'
+  return { openStart: canvas.from, closeAt: close.from }
+}
+
+/**
+ * What would stop `createBox` in this document, or null when a box can be
+ * drawn. Lets the UI explain itself before the user even tries.
+ */
+export function createBoxProblem(source: string): CreateBoxProblem | null {
+  const span = canvasSpan(source)
+  if (typeof span === 'string') return span
+  if (source.lastIndexOf('</style>') === -1) return 'no-style'
+  return null
+}
+
+/**
+ * Scan the direct element children of the canvas — any tag name; flat boxes,
+ * no nesting in MVP — returning each box's opening-tag geometry in document
+ * order.
+ */
+function scanBoxes(source: string): RawBox[] {
+  const canvas = findCanvas(source)
+  if (!canvas) return []
+  const boxes: RawBox[] = []
+  for (const child of canvas.getChildren('Element')) {
+    const raw = rawBoxOf(source, child)
+    if (raw) boxes.push(raw)
+  }
+  return boxes
 }
 
 /**
@@ -133,7 +288,7 @@ function identityClass(classAttr: string | null): string {
 export function listBoxes(source: string): Box[] {
   return scanBoxes(source).map((raw, i) => ({
     handle: `bx_${i + 1}`,
-    className: identityClass(classAttrOf(raw.openTag)),
+    className: identityClass(classAttrOf(raw)),
   }))
 }
 
@@ -182,15 +337,14 @@ function escapeRegExp(s: string): string {
 
 /** Ranges of each whitespace-separated class token inside a box's opening tag. */
 function classTokenRanges(raw: RawBox): { name: string; from: number; to: number }[] {
-  const m = /class="([^"]*)"/.exec(raw.openTag)
-  if (!m) return []
-  const valueStart = raw.openStart + m.index + 'class="'.length
+  const attr = attrOf(raw, 'class')
+  if (!attr) return []
   const out: { name: string; from: number; to: number }[] = []
-  for (const t of m[1].matchAll(/\S+/g)) {
+  for (const t of attr.value.matchAll(/\S+/g)) {
     out.push({
       name: t[0],
-      from: valueStart + t.index,
-      to: valueStart + t.index + t[0].length,
+      from: attr.valueFrom + t.index,
+      to: attr.valueFrom + t.index + t[0].length,
     })
   }
   return out
@@ -198,9 +352,10 @@ function classTokenRanges(raw: RawBox): { name: string; from: number; to: number
 
 export function resolveTokens(source: string): ManagedToken[] {
   // Identity class → its HTML class-attr occurrences, for boxes that exist.
+  const boxes = scanBoxes(source)
   const htmlRanges = new Map<string, TokenRange[]>()
-  for (const raw of scanBoxes(source)) {
-    const cls = identityClass(classAttrOf(raw.openTag))
+  for (const raw of boxes) {
+    const cls = identityClass(classAttrOf(raw))
     if (!cls) continue
     const ranges = htmlRanges.get(cls) ?? []
     for (const t of classTokenRanges(raw)) {
@@ -228,10 +383,12 @@ export function resolveTokens(source: string): ManagedToken[] {
     for (const m of source.matchAll(new RegExp('\\.' + escaped + '(?![\\w-])', 'g'))) {
       ranges.push({ from: m.index + 1, to: m.index + 1 + name.length })
     }
-    // Managed `id="name"` (added by the JS tool; the id mirrors the class)
-    for (const m of source.matchAll(new RegExp('\\bid="(' + escaped + ')"', 'g'))) {
-      const at = m.index + m[0].indexOf(name)
-      ranges.push({ from: at, to: at + name.length })
+    // Managed `id` on a box (added by the JS tool; the id mirrors the class)
+    for (const raw of boxes) {
+      const id = attrOf(raw, 'id')
+      if (id?.value === name) {
+        ranges.push({ from: id.valueFrom, to: id.valueFrom + name.length })
+      }
     }
     // `getElementById('name')` argument
     for (const m of source.matchAll(
@@ -291,20 +448,9 @@ export function ensureRule(source: string, handle: string): EnsureRuleResult {
     return { source, cursor: existing.to - 1, created: false }
   }
 
-  const styleClose = source.lastIndexOf('</style>')
-  if (styleClose === -1) return { source, cursor: 0, created: false }
-
-  const rule = `      .${box.className} {\n        ` // cursor lands here
-  const ruleTail = `\n      }\n    `
-  const cursor = styleClose + rule.length
-  const next = source.slice(0, styleClose) + rule + ruleTail + source.slice(styleClose)
-  return { source: next, cursor, created: true }
-}
-
-/** A box's opening-tag `id`, or null. */
-function idAttrOf(openTag: string): string | null {
-  const m = openTag.match(/\bid="([^"]*)"/)
-  return m ? m[1] : null
+  const added = appendRule(source, box.className, [''])
+  if (!added) return { source, cursor: 0, created: false }
+  return { ...added, created: true }
 }
 
 /** Auto-derive a JS variable name from a class (`box-1` → `box1`). */
@@ -337,18 +483,20 @@ export function attachJs(source: string, handle: string): AttachJsResult {
   if (idx === -1) return { source, cursor: 0, varName: '' }
 
   const raw = boxes[idx]
-  const id = identityClass(classAttrOf(raw.openTag))
+  const id = identityClass(classAttrOf(raw))
   const varName = varNameFor(id)
 
   // Already wired → jump to the existing const line (no duplicate).
-  if (idAttrOf(raw.openTag)) {
+  if (attrOf(raw, 'id')?.value) {
     const marker = `getElementById('${id}')`
     const at = source.indexOf(marker)
     return { source, cursor: at === -1 ? source.length : at + marker.length, varName }
   }
 
-  // 1. Add the id to the box's opening tag (just before its closing `>`).
-  const insertIdAt = raw.openEnd - 1
+  // 1. Add the id to the box's opening tag (just before its closing `>`, or
+  //    before the `/>` of a self-closing tag), ahead of any padding there.
+  let insertIdAt = raw.endTagStart
+  while (insertIdAt > raw.tagNameEnd && /\s/.test(source[insertIdAt - 1])) insertIdAt--
   let out = source.slice(0, insertIdAt) + ` id="${id}"` + source.slice(insertIdAt)
 
   // 2. Append the wiring to the single shared <script> (create if absent).
@@ -371,9 +519,11 @@ export function attachJs(source: string, handle: string): AttachJsResult {
 }
 
 /**
- * Remove a box's JS wiring: strip the `id` from the element and the matching
- * `getElementById` line from the shared script, removing the script block once
- * it holds no more references. A box with no JS attached is left untouched.
+ * Remove a box's JS wiring: strip the `id` from the element and the box's own
+ * `const … = document.getElementById('<id>')` line from the script. Everything
+ * else in the script is the user's code and stays put — the `<script>` block is
+ * only dropped when nothing but whitespace is left inside it. A box with no JS
+ * attached is left untouched.
  */
 export function detachJs(source: string, handle: string): { source: string } {
   const boxes = scanBoxes(source)
@@ -381,33 +531,99 @@ export function detachJs(source: string, handle: string): { source: string } {
   if (idx === -1) return { source }
 
   const raw = boxes[idx]
-  const id = idAttrOf(raw.openTag)
-  if (!id) return { source } // no JS attached
+  const idAttr = attrOf(raw, 'id')
+  const id = idAttr?.value
+  if (!idAttr || !id) return { source } // no JS attached
 
-  // 1. Strip the id from the opening tag.
-  const newTag = raw.openTag.replace(/\s+id="[^"]*"/, '')
-  let out = source.slice(0, raw.openStart) + newTag + source.slice(raw.openEnd)
+  // 1. Strip the id attribute, and the whitespace before it, from the tag.
+  let stripFrom = idAttr.from
+  while (stripFrom > raw.openStart && /\s/.test(source[stripFrom - 1])) stripFrom--
+  let out = source.slice(0, stripFrom) + source.slice(idAttr.to)
 
-  // 2. Remove the const line that references this id.
+  // 2. Remove the const line that references this id — and only that line.
   const line = new RegExp(
     `[ \\t]*const [^\\n]*getElementById\\((['"])${escapeRegExp(id)}\\1\\)[^\\n]*\\n`,
   )
-  out = out.replace(line, '')
+  const hit = line.exec(out)
+  if (!hit) return { source: out }
+  out = out.slice(0, hit.index) + out.slice(hit.index + hit[0].length)
 
-  // 3. Drop the shared script entirely once it has no more const wiring.
-  const open = out.indexOf('<script>')
-  const close = out.indexOf('</script>')
-  if (open !== -1 && close !== -1) {
-    const inner = out.slice(open + '<script>'.length, close)
-    if (!inner.includes('const ')) {
-      out = out.replace(/[ \t]*<script>[\s\S]*?<\/script>\n?/, '')
+  // 3. Drop the script that held it, but only if it is now empty. Judging by
+  //    "no more `const`" would delete user code written any other way.
+  const open = out.lastIndexOf('<script', hit.index)
+  const openEnd = open === -1 ? -1 : out.indexOf('>', open) + 1
+  const close = out.indexOf('</script>', hit.index)
+  if (open !== -1 && close !== -1 && openEnd <= close) {
+    if (out.slice(openEnd, close).trim() === '') {
+      const lineStart = out.lastIndexOf('\n', open) + 1
+      const from = /^[ \t]*$/.test(out.slice(lineStart, open)) ? lineStart : open
+      let to = close + '</script>'.length
+      if (out[to] === '\n') to += 1
+      out = out.slice(0, from) + out.slice(to)
     }
   }
   return { source: out }
 }
 
+/** Why a name can't become a box's class. */
+export type RenameProblem =
+  /** Nothing (or only whitespace) was entered. */
+  | 'empty'
+  /** Not a plain CSS identifier — it would need escaping in a selector, or break the markup. */
+  | 'invalid'
+  /** Another box, or an existing CSS rule, already uses it — renaming would merge the two. */
+  | 'taken'
+
+/**
+ * Plain CSS class identifiers only. Valid CSS allows more with escaping, but a
+ * name that needs escaping in a selector — or that holds a space or a quote —
+ * can't be written into both the class attribute and the rule as-is.
+ */
+const CLASS_NAME = /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/
+
+/** Every class name used as a selector in the document's `<style>` blocks. */
+function cssClassNames(source: string): Set<string> {
+  const names = new Set<string>()
+  const cursor = htmlParser.parse(source).cursor()
+  do {
+    if (cursor.name !== 'StyleText') continue
+    const css = source.slice(cursor.from, cursor.to).replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const m of css.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)) names.add(m[1])
+  } while (cursor.next())
+  return names
+}
+
+/**
+ * Check `newName` as the new class of box `handle`, before anything is written.
+ * Renaming to the box's own current name is fine (a no-op). Anything already
+ * in use — another box's class, or any class selector in the styles — is
+ * refused, since sharing a name would silently merge two boxes' styling.
+ */
+export function validateBoxName(
+  source: string,
+  handle: string,
+  newName: string,
+): RenameProblem | null {
+  const name = newName.trim()
+  if (!name) return 'empty'
+  if (!CLASS_NAME.test(name)) return 'invalid'
+
+  const boxes = scanBoxes(source)
+  const idx = listBoxes(source).findIndex((b) => b.handle === handle)
+  const current = idx === -1 ? '' : identityClass(classAttrOf(boxes[idx]))
+  if (name === current) return null
+
+  const otherBoxClasses = boxes
+    .filter((_, i) => i !== idx)
+    .flatMap((raw) => (classAttrOf(raw) ?? '').split(/\s+/))
+  if (otherBoxClasses.includes(name) || cssClassNames(source).has(name)) return 'taken'
+  return null
+}
+
 export interface RenameResult {
   source: string
+  /** Set when `newName` was refused; `source` is then returned unchanged. */
+  problem?: RenameProblem
 }
 
 /**
@@ -415,10 +631,15 @@ export interface RenameResult {
  * (CSS selector + HTML class; the id + `getElementById` arg once JS is attached
  * — see attachJs). The box's handle is untouched, so tracking survives, and
  * because it returns a single new source the editor applies it as one undo step.
+ * A name that fails `validateBoxName` is refused rather than written.
  */
 export function rename(source: string, handle: string, newName: string): RenameResult {
   const box = listBoxes(source).find((b) => b.handle === handle)
   if (!box || !box.className) return { source }
+
+  const problem = validateBoxName(source, handle, newName)
+  if (problem) return { source, problem }
+  const name = newName.trim()
 
   const token = resolveTokens(source).find((t) => t.className === box.className)
   const ranges = token?.ranges ?? []
@@ -427,7 +648,7 @@ export function rename(source: string, handle: string, newName: string): RenameR
   let out = source
   for (let i = ranges.length - 1; i >= 0; i--) {
     const { from, to } = ranges[i]
-    out = out.slice(0, from) + newName + out.slice(to)
+    out = out.slice(0, from) + name + out.slice(to)
   }
   return { source: out }
 }
@@ -446,7 +667,7 @@ export function instrument(source: string): string {
   let out = source
   for (let i = boxes.length - 1; i >= 0; i--) {
     const raw = boxes[i]
-    const insertAt = raw.openStart + '<div'.length
+    const insertAt = raw.tagNameEnd
     const attr = ` ${BC_ATTR}="bx_${i + 1}"`
     out = out.slice(0, insertAt) + attr + out.slice(insertAt)
   }
@@ -472,33 +693,32 @@ export function createBox(
   source: string,
   placement: BoxPlacement,
 ): CreateBoxResult {
+  const span = canvasSpan(source)
+  if (typeof span === 'string') return { ok: false, problem: span }
+  if (source.lastIndexOf('</style>') === -1) return { ok: false, problem: 'no-style' }
+
   const n = nextBoxNumber(source)
   const className = `box-${n}`
   const { left, top, width, height } = rectOf(placement)
 
-  // 1. Insert the box div as the last child of the canvas.
-  const closeAt = canvasCloseOffset(source)
-  const boxDiv = `  <div class="${className}"></div>\n    `
-  let next = source.slice(0, closeAt) + boxDiv + source.slice(closeAt)
+  // 1. Insert the box div as the last child of the canvas, on its own line one
+  //    level in from the canvas tag — even when the canvas is a one-liner.
+  const canvasIndent = indentOfLine(source, span.openStart)
+  const boxLine = `${canvasIndent}${INDENT}<div class="${className}"></div>`
+  const withBox = insertBeforeClose(source, span.closeAt, canvasIndent, boxLine).source
 
   // 2. Append the starter rule to the end of the <style> block. The blank line
   //    before `}` is the cursor's landing spot — ready to type the next prop.
-  const styleClose = next.lastIndexOf('</style>')
-  if (styleClose === -1) throw new Error('createBox: no <style> block in source')
+  //    (The editor removes it again if it is left unused; see SceneEditor.)
+  const added = appendRule(withBox, className, [
+    'position: absolute;',
+    `left: ${left}px;`,
+    `top: ${top}px;`,
+    `width: ${width}px;`,
+    `height: ${height}px;`,
+    `background: ${STARTER_BACKGROUND};`,
+    '',
+  ])!
 
-  const rule =
-    `      .${className} {\n` +
-    `        position: absolute;\n` +
-    `        left: ${left}px;\n` +
-    `        top: ${top}px;\n` +
-    `        width: ${width}px;\n` +
-    `        height: ${height}px;\n` +
-    `        background: ${STARTER_BACKGROUND};\n` +
-    `        ` // cursor lands here, on an indented blank line
-  const ruleTail = `\n      }\n    `
-
-  const cursor = styleClose + rule.length
-  next = next.slice(0, styleClose) + rule + ruleTail + next.slice(styleClose)
-
-  return { source: next, className, cursor }
+  return { ok: true, source: added.source, className, cursor: added.cursor }
 }
