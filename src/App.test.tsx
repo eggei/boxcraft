@@ -340,6 +340,7 @@ describe("keyboard shortcuts", () => {
     // The sandboxed stage can only tell the app about a key press through its
     // bridge — this is the message the bridge posts for Esc.
     const iframe = screen.getByTitle("Scene preview") as HTMLIFrameElement;
+    iframe.focus();
     window.dispatchEvent(
       new MessageEvent("message", {
         data: { channel: BRIDGE_CHANNEL, type: "keydown", key: "Escape", code: "Escape" },

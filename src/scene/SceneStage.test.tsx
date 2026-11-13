@@ -115,17 +115,43 @@ describe('SceneStage bridge', () => {
     expect(postMessage).toHaveBeenCalledWith({ channel: BRIDGE_CHANNEL, type: 'measure' }, '*')
   })
 
-  it('replays a key pressed inside the stage on the parent window', () => {
+  /** Keys replayed on the parent window while `post`ing the given messages. */
+  function replayed(messages: Record<string, unknown>[], { focus = true } = {}) {
     const seen: KeyboardEvent[] = []
     const listener = (event: KeyboardEvent) => seen.push(event)
     window.addEventListener('keydown', listener)
     render(<SceneStage source={SOURCE} {...stageProps()} />)
-
-    post({ type: 'keydown', key: 'b', code: 'KeyB', shiftKey: true })
+    if (focus) iframe().focus()
+    for (const message of messages) post(message)
     window.removeEventListener('keydown', listener)
+    return seen
+  }
 
+  it('replays a key pressed inside the stage on the parent window', () => {
+    const seen = replayed([{ type: 'keydown', key: 'b', code: 'KeyB', shiftKey: true }])
     expect(seen).toHaveLength(1)
     expect(seen[0]).toMatchObject({ key: 'b', code: 'KeyB', shiftKey: true, ctrlKey: false })
+  })
+
+  it('replays Escape, so the editor can still be left from the stage', () => {
+    const seen = replayed([{ type: 'keydown', key: 'Escape', code: 'Escape' }])
+    expect(seen.map((event) => event.key)).toEqual(['Escape'])
+  })
+
+  it("drops keys beyond the stage's own shortcuts, which a scene script could fake", () => {
+    const seen = replayed([
+      { type: 'keydown', key: 'n', code: 'KeyN' },
+      { type: 'keydown', key: 'Enter', code: 'Enter', metaKey: true },
+      { type: 'keydown', key: 'ƒ', code: 'KeyF', altKey: true },
+      { type: 'keydown', key: 'b', code: 'KeyB', ctrlKey: true },
+      { type: 'keydown', key: { toString: () => 'b' }, code: 'KeyB' },
+    ])
+    expect(seen).toHaveLength(0)
+  })
+
+  it('replays nothing while the stage does not hold focus', () => {
+    const seen = replayed([{ type: 'keydown', key: 'Escape', code: 'Escape' }], { focus: false })
+    expect(seen).toHaveLength(0)
   })
 
   it('places a box from the canvas rect the bridge reported', () => {
