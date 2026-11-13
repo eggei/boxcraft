@@ -32,6 +32,36 @@ function canvasPageRect(iframe: HTMLIFrameElement | null): DOMRect | null {
 }
 
 /**
+ * Replay an iframe key press on the parent window. Skipped while the scene's
+ * own fields are being typed into — those keys are the scene's, not the app's.
+ * If an app shortcut claims the replayed event, the original is claimed too,
+ * so the scene doesn't also act on it.
+ */
+function forwardKey(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null
+  if (
+    target &&
+    (target.isContentEditable ||
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+  ) {
+    return
+  }
+  const replay = new KeyboardEvent('keydown', {
+    key: event.key,
+    code: event.code,
+    altKey: event.altKey,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    repeat: event.repeat,
+    bubbles: true,
+    cancelable: true,
+  })
+  window.dispatchEvent(replay)
+  if (replay.defaultPrevented) event.preventDefault()
+}
+
+/**
  * The rendered scene: an isolated iframe of the instrumented source (its
  * `console.log` reaches the real devtools — no in-app console). The source in
  * the iframe carries transient `data-bc` handles for hit-testing; the authored
@@ -139,6 +169,10 @@ export function SceneStage({
     setOutline(new DOMRect(b.left, b.top, b.width, b.height))
   }
 
+  // Once the stage has been clicked, focus is inside the iframe and its key
+  // presses never reach the app's window listeners — Esc, V/B/J, N and the
+  // rest would go dead. Each one is replayed on the parent window as an
+  // equivalent event, so the shortcuts work wherever focus happens to be.
   useEffect(function bindIframe() {
     const iframe = iframeRef.current
     if (!iframe) return
@@ -155,6 +189,7 @@ export function SceneStage({
           if (tool === 'js') onAttachRef.current(handle)
           else onSelectRef.current(handle)
         })
+        doc.addEventListener('keydown', forwardKey)
       }
       measureOutline.current() // re-align once the new render has painted
     }
