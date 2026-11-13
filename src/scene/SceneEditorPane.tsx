@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { IndentIncrease } from 'lucide-react'
-import { WithTooltip } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
-import { useEditorSettings } from '@/settings/useEditorSettings'
-import { EditorSettingsMenu } from './EditorSettingsMenu'
-import { SceneEditor, type SceneEditorHandle } from './SceneEditor'
-import { SceneStage } from './SceneStage'
-import { Toolbar, type Tool } from './Toolbar'
-import { listBoxes, type BoxPlacement } from './document'
+import { useEffect, useRef, useState } from "react";
+import { IndentIncrease } from "lucide-react";
+import { WithTooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { useEditorSettings } from "@/settings/useEditorSettings";
+import { EditorSettingsMenu } from "./EditorSettingsMenu";
+import { SceneEditor, type SceneEditorHandle } from "./SceneEditor";
+import { SceneStage } from "./SceneStage";
+import { Toolbar, type Tool } from "./Toolbar";
+import { listBoxes, type BoxPlacement } from "./document";
 
 /**
  * The L3 editing surface for a single scene: the CodeMirror source on one side
@@ -20,38 +20,41 @@ import { listBoxes, type BoxPlacement } from './document'
 export function SceneEditorPane({
   source,
   onChange,
+  onExit,
 }: {
-  source: string
-  onChange: (source: string) => void
+  source: string;
+  onChange: (source: string) => void;
+  /** Leave the editor — what Vim's `:q` asks for. */
+  onExit?: () => void;
 }) {
-  const [tool, setTool] = useState<Tool>('select')
-  const [selectedHandle, setSelectedHandle] = useState<string | null>(null)
-  const editorRef = useRef<SceneEditorHandle>(null)
-  const { settings, toggleAutoFormat, toggleEditorSide } = useEditorSettings()
-  const codeOnRight = settings.editorSide === 'right'
+  const [tool, setTool] = useState<Tool>("select");
+  const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
+  const editorRef = useRef<SceneEditorHandle>(null);
+  const { settings, toggleAutoFormat, toggleVimMode, toggleEditorSide } = useEditorSettings();
+  const codeOnRight = settings.editorSide === "right";
 
   function handleCreateBox(placement: BoxPlacement) {
-    editorRef.current?.createBox(placement)
-    setTool('select') // tool reverts to Select after creation
+    editorRef.current?.createBox(placement);
+    setTool("select"); // tool reverts to Select after creation
   }
 
   function handleSelectBox(handle: string) {
-    setSelectedHandle(handle)
-    editorRef.current?.selectBox(handle)
+    setSelectedHandle(handle);
+    editorRef.current?.selectBox(handle);
   }
 
   function handleAttachJs(handle: string) {
-    setSelectedHandle(handle)
-    editorRef.current?.attachJs(handle)
-    setTool('select') // tool reverts to Select after attaching
+    setSelectedHandle(handle);
+    editorRef.current?.attachJs(handle);
+    setTool("select"); // tool reverts to Select after attaching
   }
 
   function handleDetachJs() {
-    if (selectedHandle) editorRef.current?.detachJs(selectedHandle)
+    if (selectedHandle) editorRef.current?.detachJs(selectedHandle);
   }
 
   function handleFormat() {
-    editorRef.current?.format()
+    editorRef.current?.format();
   }
 
   // ⌥F formats from anywhere on the editing surface, including from inside the
@@ -60,35 +63,34 @@ export function SceneEditorPane({
   useEffect(function bindFormatShortcut() {
     function onKeyDown(event: KeyboardEvent) {
       // Option+F types "ƒ" on macOS, so match the physical key, not `key`.
-      if (!event.altKey || event.metaKey || event.ctrlKey) return
-      if (event.code !== 'KeyF') return
-      const target = event.target as HTMLElement | null
-      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return
+      if (!event.altKey || event.metaKey || event.ctrlKey) return;
+      if (event.code !== "KeyF") return;
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
       // Cancels the "ƒ" the editor would otherwise be handed.
-      event.preventDefault()
-      editorRef.current?.format()
+      event.preventDefault();
+      editorRef.current?.format();
     }
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener("keydown", onKeyDown);
     return function unbind() {
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [])
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   function handleRename() {
-    if (!selectedHandle) return
-    const box = listBoxes(source).find((b) => b.handle === selectedHandle)
-    if (!box) return
-    const next = window.prompt('Rename box', box.className)?.trim()
-    if (!next || next === box.className) return
-    editorRef.current?.renameBox(selectedHandle, next)
+    if (!selectedHandle) return;
+    const box = listBoxes(source).find((b) => b.handle === selectedHandle);
+    if (!box) return;
+    const next = window.prompt("Rename box", box.className)?.trim();
+    if (!next || next === box.className) return;
+    editorRef.current?.renameBox(selectedHandle, next);
   }
 
   const selectedBox = selectedHandle
     ? listBoxes(source).find((b) => b.handle === selectedHandle)
-    : undefined
+    : undefined;
   const selectedHasJs =
-    !!selectedBox &&
-    source.includes(`getElementById('${selectedBox.className}')`)
+    !!selectedBox && source.includes(`getElementById('${selectedBox.className}')`);
 
   return (
     <div className="grid h-full min-h-0 grid-cols-2">
@@ -96,8 +98,8 @@ export function SceneEditorPane({
           children would remount CodeMirror and take the undo history with it. */}
       <div
         className={cn(
-          'relative min-h-0 overflow-hidden',
-          codeOnRight ? 'order-2 border-l' : 'order-1 border-r',
+          "relative min-h-0 overflow-hidden",
+          codeOnRight ? "order-2 border-l" : "order-1 border-r",
         )}
       >
         <SceneEditor
@@ -106,6 +108,8 @@ export function SceneEditorPane({
           onChange={onChange}
           onCursorBox={setSelectedHandle}
           autoFormat={settings.autoFormat}
+          vimMode={settings.vimMode}
+          onQuit={onExit}
         />
         {/* One corner stack over the source: the settings gear, the tools
             beneath it, then Format. It lives on the editor side because that is
@@ -115,6 +119,7 @@ export function SceneEditorPane({
           <EditorSettingsMenu
             settings={settings}
             onToggleAutoFormat={toggleAutoFormat}
+            onToggleVimMode={toggleVimMode}
             onToggleEditorSide={toggleEditorSide}
           />
           <Toolbar tool={tool} onToolChange={setTool} />
@@ -130,7 +135,7 @@ export function SceneEditorPane({
           </WithTooltip>
         </div>
       </div>
-      <div className={cn('relative min-h-0', codeOnRight ? 'order-1' : 'order-2')}>
+      <div className={cn("relative min-h-0", codeOnRight ? "order-1" : "order-2")}>
         <SceneStage
           source={source}
           tool={tool}
@@ -157,22 +162,20 @@ export function SceneEditorPane({
               tip={
                 selectedHasJs
                   ? "Remove this box's script hook from the source"
-                  : 'Add a script hook for this box to the source'
+                  : "Add a script hook for this box to the source"
               }
             >
               <button
                 type="button"
-                onClick={
-                  selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)
-                }
+                onClick={selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)}
                 className="hover:bg-muted rounded-md border px-2 py-1"
               >
-                {selectedHasJs ? 'Detach JS' : 'Attach JS'}
+                {selectedHasJs ? "Detach JS" : "Attach JS"}
               </button>
             </WithTooltip>
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }
