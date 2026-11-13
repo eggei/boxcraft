@@ -26,6 +26,7 @@ import {
   ruleRangeOf,
   type BoxPlacement,
   type CreateBoxProblem,
+  type RenameProblem,
   type TokenRange,
 } from "./document";
 
@@ -37,8 +38,11 @@ export interface SceneEditorHandle {
   createBox: (placement: BoxPlacement) => CreateBoxProblem | null;
   /** Select a box: ensure it has a rule, scroll to it, land the cursor inside. */
   selectBox: (handle: string) => void;
-  /** Rename a box everywhere in one undo step. */
-  renameBox: (handle: string, newName: string) => void;
+  /**
+   * Rename a box everywhere in one undo step. Returns why the name was refused
+   * (see `validateBoxName`), or null when it was applied.
+   */
+  renameBox: (handle: string, newName: string) => RenameProblem | null;
   /** Attach JS to a box (or jump to its line) and land the cursor to code. */
   attachJs: (handle: string) => void;
   /** Detach a box's JS wiring in one undo step. */
@@ -304,15 +308,17 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
 
       renameBox(handleId, newName) {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view) return null;
         const source = view.state.doc.toString();
-        const { source: next } = rename(source, handleId, newName);
-        if (next === source) return;
+        const { source: next, problem } = rename(source, handleId, newName);
+        if (problem) return problem;
+        if (next === source) return null;
         // A single transaction — one ⌘Z reverts the whole rename.
         view.dispatch({
           changes: { from: 0, to: source.length, insert: next },
         });
         onChangeRef.current(next);
+        return null;
       },
 
       attachJs(handleId) {

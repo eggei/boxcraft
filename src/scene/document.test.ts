@@ -13,6 +13,7 @@ import {
   resolveTokens,
   ruleRangeOf,
   serialize,
+  validateBoxName,
   type BoxPlacement,
 } from './document'
 
@@ -377,6 +378,77 @@ describe('rename', () => {
     const doc = parse(renamed)
     expect(doc.querySelector('.hero')).not.toBeNull()
     expect(doc.querySelector('.box-2')).not.toBeNull() // sibling untouched
+  })
+
+  it('refuses a name another box already has, leaving the source alone', () => {
+    const source = withBoxes(2)
+    const result = rename(source, handleOf(source, 'box-1'), 'box-2')
+
+    expect(result.problem).toBe('taken')
+    expect(result.source).toBe(source)
+    expect(listBoxes(result.source)).toHaveLength(2) // nothing merged
+  })
+
+  it('refuses names that would break the markup or the selector', () => {
+    const source = withBoxes(1)
+    for (const name of ['my box', 'a"b', '1st', '--x', 'a.b']) {
+      const result = rename(source, handleOf(source, 'box-1'), name)
+      expect(result.problem).toBe('invalid')
+      expect(result.source).toBe(source)
+    }
+  })
+
+  it('trims surrounding whitespace from an accepted name', () => {
+    const source = withBoxes(1)
+    const { source: renamed, problem } = rename(source, handleOf(source, 'box-1'), '  hero ')
+    expect(problem).toBeUndefined()
+    expect(parse(renamed).querySelector('.hero')).not.toBeNull()
+  })
+})
+
+describe('validateBoxName', () => {
+  const handleOf = (source: string, className: string) =>
+    listBoxes(source).find((b) => b.className === className)!.handle
+
+  it('accepts a fresh CSS identifier, including leading - and _', () => {
+    const source = withBoxes(1)
+    const handle = handleOf(source, 'box-1')
+    for (const name of ['hero', '_hero', '-hero', 'hero-2', 'Hero_Two']) {
+      expect(validateBoxName(source, handle, name)).toBeNull()
+    }
+  })
+
+  it('accepts the box keeping its own name', () => {
+    const source = withBoxes(1)
+    expect(validateBoxName(source, handleOf(source, 'box-1'), 'box-1')).toBeNull()
+  })
+
+  it('reports an empty name', () => {
+    const source = withBoxes(1)
+    expect(validateBoxName(source, handleOf(source, 'box-1'), '   ')).toBe('empty')
+  })
+
+  it('refuses any class already used as a selector in the styles', () => {
+    const source = withBoxes(1).replace(
+      '</style>',
+      '  .glow:hover, .card > .title { color: red; }\n    </style>',
+    )
+    const handle = handleOf(source, 'box-1')
+    for (const name of ['canvas', 'glow', 'card', 'title']) {
+      expect(validateBoxName(source, handle, name)).toBe('taken')
+    }
+  })
+
+  it("refuses another box's extra class, but not names that only appear in script", () => {
+    const base = withBoxes(2).replace('class="box-2"', 'class="box-2 active"')
+    const source = attachJs(base, handleOf(base, 'box-1')).source.replace(
+      '</script>',
+      '  box1.style.color = "red";\n    </script>',
+    )
+    const handle = handleOf(source, 'box-1')
+    expect(validateBoxName(source, handle, 'active')).toBe('taken')
+    // `.style` in JS is a property access, not a class in use.
+    expect(validateBoxName(source, handle, 'style')).toBeNull()
   })
 })
 

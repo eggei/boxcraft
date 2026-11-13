@@ -485,8 +485,65 @@ export function detachJs(source: string, handle: string): { source: string } {
   return { source: out }
 }
 
+/** Why a name can't become a box's class. */
+export type RenameProblem =
+  /** Nothing (or only whitespace) was entered. */
+  | 'empty'
+  /** Not a plain CSS identifier — it would need escaping in a selector, or break the markup. */
+  | 'invalid'
+  /** Another box, or an existing CSS rule, already uses it — renaming would merge the two. */
+  | 'taken'
+
+/**
+ * Plain CSS class identifiers only. Valid CSS allows more with escaping, but a
+ * name that needs escaping in a selector — or that holds a space or a quote —
+ * can't be written into both the class attribute and the rule as-is.
+ */
+const CLASS_NAME = /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/
+
+/** Every class name used as a selector in the document's `<style>` blocks. */
+function cssClassNames(source: string): Set<string> {
+  const names = new Set<string>()
+  const cursor = htmlParser.parse(source).cursor()
+  do {
+    if (cursor.name !== 'StyleText') continue
+    const css = source.slice(cursor.from, cursor.to).replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const m of css.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)) names.add(m[1])
+  } while (cursor.next())
+  return names
+}
+
+/**
+ * Check `newName` as the new class of box `handle`, before anything is written.
+ * Renaming to the box's own current name is fine (a no-op). Anything already
+ * in use — another box's class, or any class selector in the styles — is
+ * refused, since sharing a name would silently merge two boxes' styling.
+ */
+export function validateBoxName(
+  source: string,
+  handle: string,
+  newName: string,
+): RenameProblem | null {
+  const name = newName.trim()
+  if (!name) return 'empty'
+  if (!CLASS_NAME.test(name)) return 'invalid'
+
+  const boxes = scanBoxes(source)
+  const idx = listBoxes(source).findIndex((b) => b.handle === handle)
+  const current = idx === -1 ? '' : identityClass(classAttrOf(boxes[idx]))
+  if (name === current) return null
+
+  const otherBoxClasses = boxes
+    .filter((_, i) => i !== idx)
+    .flatMap((raw) => (classAttrOf(raw) ?? '').split(/\s+/))
+  if (otherBoxClasses.includes(name) || cssClassNames(source).has(name)) return 'taken'
+  return null
+}
+
 export interface RenameResult {
   source: string
+  /** Set when `newName` was refused; `source` is then returned unchanged. */
+  problem?: RenameProblem
 }
 
 /**
@@ -494,10 +551,15 @@ export interface RenameResult {
  * (CSS selector + HTML class; the id + `getElementById` arg once JS is attached
  * — see attachJs). The box's handle is untouched, so tracking survives, and
  * because it returns a single new source the editor applies it as one undo step.
+ * A name that fails `validateBoxName` is refused rather than written.
  */
 export function rename(source: string, handle: string, newName: string): RenameResult {
   const box = listBoxes(source).find((b) => b.handle === handle)
   if (!box || !box.className) return { source }
+
+  const problem = validateBoxName(source, handle, newName)
+  if (problem) return { source, problem }
+  const name = newName.trim()
 
   const token = resolveTokens(source).find((t) => t.className === box.className)
   const ranges = token?.ranges ?? []
@@ -506,7 +568,7 @@ export function rename(source: string, handle: string, newName: string): RenameR
   let out = source
   for (let i = ranges.length - 1; i >= 0; i--) {
     const { from, to } = ranges[i]
-    out = out.slice(0, from) + newName + out.slice(to)
+    out = out.slice(0, from) + name + out.slice(to)
   }
   return { source: out }
 }
