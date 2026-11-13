@@ -14,6 +14,8 @@ import { useScenes } from "@/scenes/useScenes";
 import { SceneFeed } from "@/scenes/SceneFeed";
 import { FilesView } from "@/scenes/FilesView";
 import { ArchivedView } from "@/scenes/ArchivedView";
+import { SceneConflictBanner } from "@/scenes/SceneConflictBanner";
+import { SaveIndicator, StorageUnavailable } from "@/scenes/StorageStatus";
 import { activeScenes, type Scene } from "@/scenes/sceneList";
 import { editPath, feedPath, pageForPath, ROUTES } from "@/scenes/navigation";
 import { useTheme } from "@/theme/useTheme";
@@ -38,6 +40,7 @@ function App() {
   const {
     scenes,
     status,
+    saveState,
     addScene,
     duplicateScene,
     archiveScene,
@@ -48,6 +51,8 @@ function App() {
     reorderScenes,
     updateSource,
     importLibrary,
+    conflicts,
+    resolveConflict,
   } = useScenes();
 
   const { theme, toggle: toggleTheme } = useTheme();
@@ -184,6 +189,7 @@ function App() {
           />
         )}
         <div className="flex-1" />
+        {status === "ready" && <SaveIndicator state={saveState} />}
 
         <WithTooltip
           tip={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
@@ -252,6 +258,8 @@ function App() {
       <main className="min-h-0 flex-1">
         {status === "loading" ? (
           <p className="text-muted-foreground p-8 text-sm">Loading…</p>
+        ) : status === "error" ? (
+          <StorageUnavailable scenes={scenes} />
         ) : (
           <LayoutGroup>
             <motion.div
@@ -301,6 +309,8 @@ function App() {
           </LayoutGroup>
         )}
       </main>
+
+      <SceneConflictBanner scenes={scenes} conflicts={conflicts} onResolve={resolveConflict} />
 
       {pendingDelete && (
         <ConfirmDialog
