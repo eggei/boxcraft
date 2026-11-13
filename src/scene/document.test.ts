@@ -16,6 +16,7 @@ import {
   validateBoxName,
   type BoxPlacement,
 } from './document'
+import { isFormatted } from './format'
 
 /** createBox in a document that can take a box; fails the test otherwise. */
 function placeBox(source: string, placement: BoxPlacement) {
@@ -115,6 +116,43 @@ describe('createBox', () => {
     expect(cursor).toBeGreaterThan(source.indexOf('background:'))
     // ...and on its own blank, indented line (not mid-token).
     expect(source.slice(0, cursor)).toMatch(/\n[ \t]*$/)
+  })
+
+  it('puts the box on its own indented line when the canvas is a one-liner', () => {
+    // DEFAULT_SOURCE's canvas is `<div class="canvas"></div>` on one line.
+    const once = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 }).source
+    expect(once).toContain(
+      '    <div class="canvas">\n      <div class="box-1"></div>\n    </div>\n',
+    )
+
+    // A second box goes below the first, the closing tag staying put.
+    const twice = placeBox(once, { kind: 'point', x: 0, y: 0 }).source
+    expect(twice).toContain(
+      '    <div class="canvas">\n' +
+        '      <div class="box-1"></div>\n' +
+        '      <div class="box-2"></div>\n' +
+        '    </div>\n',
+    )
+  })
+
+  it('indents the new rule one level inside <style>, closing tag untouched', () => {
+    const { source } = placeBox(DEFAULT_SOURCE, { kind: 'point', x: 0, y: 0 })
+    expect(source).toContain(
+      '      .canvas { position: relative; width: 400px; height: 400px; background: #fff; }\n' +
+        '      .box-1 {\n' +
+        '        position: absolute;\n',
+    )
+    expect(source).toContain('        background: #4f46e5;\n        \n      }\n    </style>')
+  })
+
+  it('generates code already in formatted shape, bar the landing line', () => {
+    let source = DEFAULT_SOURCE
+    for (let i = 0; i < 2; i++) {
+      source = placeBox(source, { kind: 'point', x: 0, y: 0 }).source
+      // What the editor does with the landing line once it is left unused.
+      source = source.replace(/\n[ \t]+\n/, '\n')
+      expect(isFormatted(source)).toBe(true)
+    }
   })
 
   it('numbers boxes by the highest existing box number', () => {

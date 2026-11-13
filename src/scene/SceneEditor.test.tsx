@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import { act, fireEvent, render } from "@testing-library/react";
+import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { getCM } from "@replit/codemirror-vim";
 import { describe, expect, it, vi } from "vitest";
@@ -319,5 +320,91 @@ describe("SceneEditor createBox", () => {
     });
 
     expect(problem).toBeNull();
+  });
+});
+
+describe("SceneEditor landing line", () => {
+  /** An editor on DEFAULT_SOURCE with one box drawn — cursor on its landing line. */
+  function drawn() {
+    const ref = createRef<SceneEditorHandle>();
+    const onChange = vi.fn();
+    const { container } = render(
+      <SceneEditor ref={ref} value={DEFAULT_SOURCE} onChange={onChange} autoFormat={false} />,
+    );
+    const view = viewIn(container);
+    act(() => {
+      ref.current!.createBox({ kind: "point", x: 20, y: 20 });
+    });
+    return { ref, view, onChange };
+  }
+
+  const LANDING = "background: #4f46e5;\n        \n      }";
+  const TIDY = "background: #4f46e5;\n      }";
+
+  it("parks the cursor on a blank line inside the new rule", () => {
+    const { view } = drawn();
+    const doc = view.state.doc.toString();
+    expect(doc).toContain(LANDING);
+    expect(view.state.doc.lineAt(view.state.selection.main.head).text.trim()).toBe("");
+  });
+
+  it("removes the blank line once the cursor moves off it unused", () => {
+    const { view, onChange } = drawn();
+
+    act(() => view.dispatch({ selection: { anchor: 0 } }));
+
+    const doc = view.state.doc.toString();
+    expect(doc).toContain(TIDY);
+    expect(doc).not.toMatch(/\n[ \t]+\n/);
+    expect(onChange).toHaveBeenLastCalledWith(doc);
+  });
+
+  it("removes it when the editor loses focus, even with auto-format off", () => {
+    const { view } = drawn();
+
+    fireEvent.blur(view.contentDOM);
+
+    expect(view.state.doc.toString()).toContain(TIDY);
+  });
+
+  it("keeps the line once something is typed on it", () => {
+    const { view } = drawn();
+    const head = view.state.selection.main.head;
+    act(() => view.dispatch({ changes: { from: head, insert: "opacity: 0.5;" } }));
+
+    act(() => view.dispatch({ selection: { anchor: 0 } }));
+
+    expect(view.state.doc.toString()).toContain(
+      "background: #4f46e5;\n        opacity: 0.5;\n      }",
+    );
+  });
+
+  it("never touches the person's own blank lines", () => {
+    const own = DEFAULT_SOURCE.replace("<style>", "<style>\n      \n");
+    const ref = createRef<SceneEditorHandle>();
+    const { container } = render(
+      <SceneEditor ref={ref} value={own} onChange={vi.fn()} autoFormat={false} />,
+    );
+    const view = viewIn(container);
+    act(() => {
+      ref.current!.createBox({ kind: "point", x: 20, y: 20 });
+    });
+
+    act(() => view.dispatch({ selection: { anchor: 0 } }));
+
+    const doc = view.state.doc.toString();
+    expect(doc).toContain("<style>\n      \n");
+    expect(doc).toContain(TIDY);
+  });
+
+  it("is tidied outside the undo history: one undo still takes the whole box back", () => {
+    const { view } = drawn();
+    act(() => view.dispatch({ selection: { anchor: 0 } }));
+
+    act(() => {
+      undo(view);
+    });
+
+    expect(view.state.doc.toString()).toBe(DEFAULT_SOURCE);
   });
 });

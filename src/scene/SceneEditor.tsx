@@ -4,11 +4,13 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import {
   Compartment,
   EditorState,
+  MapMode,
   RangeSetBuilder,
   StateEffect,
   StateField,
+  Transaction,
 } from "@codemirror/state";
-import type { Extension } from "@codemirror/state";
+import type { Extension, TransactionSpec } from "@codemirror/state";
 import { html } from "@codemirror/lang-html";
 import { basicSetup } from "codemirror";
 import { editorTheme } from "./editorTheme";
@@ -95,7 +97,12 @@ const chipPlugin = ViewPlugin.fromClass(
 );
 
 // The selected box's rule gets a background highlight, set imperatively.
-const setSelectedRule = StateEffect.define<TokenRange | null>();
+// The range maps through changes, so it stays on the rule when the same
+// transaction also drops an unused landing line above it.
+const setSelectedRule = StateEffect.define<TokenRange | null>({
+  map: (range, mapping) =>
+    range && { from: mapping.mapPos(range.from), to: mapping.mapPos(range.to) },
+});
 const selectedRuleField = StateField.define<DecorationSet>({
   create() {
     return Decoration.none;
@@ -117,6 +124,73 @@ const selectedRuleField = StateField.define<DecorationSet>({
     return deco;
   },
   provide: (f) => EditorView.decorations.from(f),
+});
+
+// The indented blank line a generated rule or script hook parks the cursor on,
+// ready to type into. Left unused it would linger in the source as stray
+// whitespace, so it is tracked and taken out again once the cursor moves off
+// it or the editor loses focus. Only that one app-made line is ever removed:
+// the person's own blank lines are never touched, and the formatter stays a
+// pure re-indent.
+const setLandingLine = StateEffect.define<number | null>();
+const landingLineField = StateField.define<number | null>({
+  create() {
+    return null;
+  },
+  update(pos, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLandingLine)) return effect.value;
+    }
+    if (pos === null) return null;
+    // Edits next to it (or a whole-document replace) mean it isn't ours to
+    // tidy any more; typing into it makes it the person's line.
+    const mapped = tr.changes.mapPos(pos, -1, MapMode.TrackDel);
+    if (mapped === null || tr.newDoc.lineAt(mapped).text.trim() !== "") return null;
+    return mapped;
+  },
+});
+
+/**
+ * The transaction that deletes the landing line, if one is tracked and still
+ * blank. Kept out of the undo history: it only tidies what the app itself
+ * added, and an undo step that merely brings back a blank line would read as
+ * a no-op.
+ */
+function landingLineRemoval(state: EditorState): TransactionSpec | null {
+  const pos = state.field(landingLineField, false);
+  if (pos == null) return null;
+  const line = state.doc.lineAt(pos);
+  if (line.text.trim() !== "") return null;
+  const first = line.number === 1;
+  return {
+    changes: {
+      from: first ? line.from : line.from - 1,
+      to: first ? Math.min(line.to + 1, state.doc.length) : line.to,
+    },
+    effects: setLandingLine.of(null),
+    annotations: Transaction.addToHistory.of(false),
+  };
+}
+
+/**
+ * Remove an unused landing line now. The tools call this before rewriting the
+ * document, since a whole-document replace would otherwise carry it along.
+ */
+function dropLandingLine(view: EditorView) {
+  const removal = landingLineRemoval(view.state);
+  if (removal) view.dispatch(removal);
+}
+
+/** Moving the cursor off an unused landing line removes it, in the same step. */
+const dropLandingLineOnLeave = EditorState.transactionFilter.of((tr) => {
+  if (tr.docChanged || !tr.selection) return tr;
+  const pos = tr.startState.field(landingLineField, false);
+  if (pos == null) return tr;
+  const line = tr.startState.doc.lineAt(pos);
+  const head = tr.selection.main.head;
+  if (head >= line.from && head <= line.to) return tr;
+  const removal = landingLineRemoval(tr.startState);
+  return removal ? [tr, removal] : tr;
 });
 
 /**
@@ -187,9 +261,11 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
     // Formatting on blur is this app's "format on save": there is no save,
     // and reformatting mid-keystroke would fight the person typing. Leaving
     // the editor — for the stage, the toolbar, anywhere — is the moment the
-    // document is between thoughts and safe to tidy.
+    // document is between thoughts and safe to tidy. An unused landing line
+    // goes first, whatever the setting — it was never the person's code.
     const formatOnBlur = EditorView.domEventHandlers({
       blur(_event, view) {
+        dropLandingLine(view);
         if (autoFormatRef.current) formatDocument(view);
       },
     });
@@ -203,6 +279,8 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       EditorView.lineWrapping,
       chipPlugin,
       selectedRuleField,
+      landingLineField,
+      dropLandingLineOnLeave,
       syncSelection,
       formatOnBlur,
     ];
@@ -269,6 +347,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       createBox(placement) {
         const view = viewRef.current;
         if (!view) return null;
+        dropLandingLine(view);
         const source = view.state.doc.toString();
         const result = createBox(source, placement);
         // Nowhere to draw: leave the document and the editor's mode alone and
@@ -279,6 +358,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
           changes: { from: 0, to: source.length, insert: result.source },
           selection: { anchor: result.cursor },
           scrollIntoView: true,
+          effects: setLandingLine.of(result.cursor),
         });
         view.focus();
         onChangeRef.current(result.source);
@@ -288,6 +368,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       selectBox(handleId) {
         const view = viewRef.current;
         if (!view) return;
+        dropLandingLine(view);
         const source = view.state.doc.toString();
         const result = ensureRule(source, handleId);
         const box = listBoxes(result.source).find((b) => b.handle === handleId);
@@ -300,7 +381,11 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
             : undefined,
           selection: { anchor: result.cursor },
           scrollIntoView: true,
-          effects: setSelectedRule.of(range),
+          effects: [
+            setSelectedRule.of(range),
+            // A re-created rule parks the cursor on a fresh blank line.
+            ...(result.created ? [setLandingLine.of(result.cursor)] : []),
+          ],
         });
         view.focus();
         if (result.created) onChangeRef.current(result.source);
@@ -309,6 +394,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       renameBox(handleId, newName) {
         const view = viewRef.current;
         if (!view) return null;
+        dropLandingLine(view);
         const source = view.state.doc.toString();
         const { source: next, problem } = rename(source, handleId, newName);
         if (problem) return problem;
@@ -324,17 +410,18 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       attachJs(handleId) {
         const view = viewRef.current;
         if (!view) return;
+        dropLandingLine(view);
         const source = view.state.doc.toString();
         const result = attachJs(source, handleId);
+        const attached = result.source !== source;
         startInsertMode(view);
         view.dispatch({
           // Re-attach returns the same source — just jump to the line.
-          changes:
-            result.source === source
-              ? undefined
-              : { from: 0, to: source.length, insert: result.source },
+          changes: attached ? { from: 0, to: source.length, insert: result.source } : undefined,
           selection: { anchor: result.cursor },
           scrollIntoView: true,
+          // New wiring parks the cursor on a blank line below it.
+          effects: attached ? setLandingLine.of(result.cursor) : [],
         });
         view.focus();
         if (result.source !== source) onChangeRef.current(result.source);
@@ -343,6 +430,7 @@ export const SceneEditor = forwardRef<SceneEditorHandle, SceneEditorProps>(funct
       detachJs(handleId) {
         const view = viewRef.current;
         if (!view) return;
+        dropLandingLine(view);
         const source = view.state.doc.toString();
         const { source: next } = detachJs(source, handleId);
         if (next === source) return;

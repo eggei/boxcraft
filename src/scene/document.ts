@@ -61,6 +61,71 @@ function nextBoxNumber(source: string): number {
   return max + 1
 }
 
+/** One level of nesting in generated code — matches the formatter's unit. */
+const INDENT = '  '
+
+/** The leading whitespace of the line that holds `offset`. */
+function indentOfLine(source: string, offset: number): string {
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1
+  return /^[ \t]*/.exec(source.slice(lineStart))![0]
+}
+
+/**
+ * Insert `block` (whole lines, already indented, no trailing newline) just
+ * inside an element, before its closing tag at `closeAt`, so the block always
+ * sits on lines of its own. When the closing tag already starts its line, the
+ * block goes above it; when it shares a line with other content — a one-liner
+ * like `<div class="canvas"></div>` — the tag is pushed onto a fresh line at
+ * `closeIndent` (the opening tag's indent). Returns where the block starts.
+ */
+function insertBeforeClose(
+  source: string,
+  closeAt: number,
+  closeIndent: string,
+  block: string,
+): { source: string; at: number } {
+  const lineStart = source.lastIndexOf('\n', closeAt - 1) + 1
+  if (/^[ \t]*$/.test(source.slice(lineStart, closeAt))) {
+    return {
+      source: source.slice(0, lineStart) + block + '\n' + source.slice(lineStart),
+      at: lineStart,
+    }
+  }
+  // Drop any padding before the tag rather than leave it trailing a line.
+  let cut = closeAt
+  while (cut > lineStart && /[ \t]/.test(source[cut - 1])) cut--
+  return {
+    source: source.slice(0, cut) + '\n' + block + '\n' + closeIndent + source.slice(closeAt),
+    at: cut + 1,
+  }
+}
+
+/**
+ * Append a CSS rule to the end of the last `<style>` block, indented one level
+ * inside the `<style>` tag. `body` is the rule's declaration lines without
+ * indentation; a final empty entry becomes the cursor's landing line — an
+ * indented blank line, ready to type the next property. Returns null when the
+ * document has no `<style>`; otherwise the cursor sits at the end of the rule's
+ * last body line.
+ */
+function appendRule(
+  source: string,
+  className: string,
+  body: string[],
+): { source: string; cursor: number } | null {
+  const styleClose = source.lastIndexOf('</style>')
+  if (styleClose === -1) return null
+  const styleOpen = source.lastIndexOf('<style', styleClose)
+  const styleIndent = indentOfLine(source, styleOpen === -1 ? styleClose : styleOpen)
+  const ruleIndent = styleIndent + INDENT
+  const declIndent = ruleIndent + INDENT
+
+  const head = `${ruleIndent}.${className} {\n` + body.map((l) => declIndent + l).join('\n')
+  const block = `${head}\n${ruleIndent}}`
+  const placed = insertBeforeClose(source, styleClose, styleIndent, block)
+  return { source: placed.source, cursor: placed.at + head.length }
+}
+
 /**
  * A box's app-owned identity. The `handle` is opaque and positional (document
  * order among canvas children) — it never appears in the source, so it survives
@@ -171,15 +236,15 @@ function findCanvas(source: string): SyntaxNode | null {
 }
 
 /**
- * Offset just before the canvas element's own closing tag, so a new box lands
- * as the canvas's last child — or why there is no such place.
+ * Where the canvas element opens, and the offset just before its own closing
+ * tag (so a new box lands as its last child) — or why there is no such place.
  */
-function canvasCloseOffset(source: string): number | CreateBoxProblem {
+function canvasSpan(source: string): { openStart: number; closeAt: number } | CreateBoxProblem {
   const canvas = findCanvas(source)
   if (!canvas) return 'no-canvas'
   const close = canvas.getChild('CloseTag')
   if (!close) return 'unterminated-canvas'
-  return close.from
+  return { openStart: canvas.from, closeAt: close.from }
 }
 
 /**
@@ -187,8 +252,8 @@ function canvasCloseOffset(source: string): number | CreateBoxProblem {
  * drawn. Lets the UI explain itself before the user even tries.
  */
 export function createBoxProblem(source: string): CreateBoxProblem | null {
-  const closeAt = canvasCloseOffset(source)
-  if (typeof closeAt !== 'number') return closeAt
+  const span = canvasSpan(source)
+  if (typeof span === 'string') return span
   if (source.lastIndexOf('</style>') === -1) return 'no-style'
   return null
 }
@@ -363,14 +428,9 @@ export function ensureRule(source: string, handle: string): EnsureRuleResult {
     return { source, cursor: existing.to - 1, created: false }
   }
 
-  const styleClose = source.lastIndexOf('</style>')
-  if (styleClose === -1) return { source, cursor: 0, created: false }
-
-  const rule = `      .${box.className} {\n        ` // cursor lands here
-  const ruleTail = `\n      }\n    `
-  const cursor = styleClose + rule.length
-  const next = source.slice(0, styleClose) + rule + ruleTail + source.slice(styleClose)
-  return { source: next, cursor, created: true }
+  const added = appendRule(source, box.className, [''])
+  if (!added) return { source, cursor: 0, created: false }
+  return { ...added, created: true }
 }
 
 /** Auto-derive a JS variable name from a class (`box-1` → `box1`). */
@@ -603,35 +663,32 @@ export function createBox(
   source: string,
   placement: BoxPlacement,
 ): CreateBoxResult {
-  const closeAt = canvasCloseOffset(source)
-  if (typeof closeAt !== 'number') return { ok: false, problem: closeAt }
+  const span = canvasSpan(source)
+  if (typeof span === 'string') return { ok: false, problem: span }
   if (source.lastIndexOf('</style>') === -1) return { ok: false, problem: 'no-style' }
 
   const n = nextBoxNumber(source)
   const className = `box-${n}`
   const { left, top, width, height } = rectOf(placement)
 
-  // 1. Insert the box div as the last child of the canvas.
-  const boxDiv = `  <div class="${className}"></div>\n    `
-  let next = source.slice(0, closeAt) + boxDiv + source.slice(closeAt)
+  // 1. Insert the box div as the last child of the canvas, on its own line one
+  //    level in from the canvas tag — even when the canvas is a one-liner.
+  const canvasIndent = indentOfLine(source, span.openStart)
+  const boxLine = `${canvasIndent}${INDENT}<div class="${className}"></div>`
+  const withBox = insertBeforeClose(source, span.closeAt, canvasIndent, boxLine).source
 
   // 2. Append the starter rule to the end of the <style> block. The blank line
   //    before `}` is the cursor's landing spot — ready to type the next prop.
-  const styleClose = next.lastIndexOf('</style>')
+  //    (The editor removes it again if it is left unused; see SceneEditor.)
+  const added = appendRule(withBox, className, [
+    'position: absolute;',
+    `left: ${left}px;`,
+    `top: ${top}px;`,
+    `width: ${width}px;`,
+    `height: ${height}px;`,
+    `background: ${STARTER_BACKGROUND};`,
+    '',
+  ])!
 
-  const rule =
-    `      .${className} {\n` +
-    `        position: absolute;\n` +
-    `        left: ${left}px;\n` +
-    `        top: ${top}px;\n` +
-    `        width: ${width}px;\n` +
-    `        height: ${height}px;\n` +
-    `        background: ${STARTER_BACKGROUND};\n` +
-    `        ` // cursor lands here, on an indented blank line
-  const ruleTail = `\n      }\n    `
-
-  const cursor = styleClose + rule.length
-  next = next.slice(0, styleClose) + rule + ruleTail + next.slice(styleClose)
-
-  return { ok: true, source: next, className, cursor }
+  return { ok: true, source: added.source, className, cursor: added.cursor }
 }
