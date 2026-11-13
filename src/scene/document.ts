@@ -351,9 +351,11 @@ export function attachJs(source: string, handle: string): AttachJsResult {
 }
 
 /**
- * Remove a box's JS wiring: strip the `id` from the element and the matching
- * `getElementById` line from the shared script, removing the script block once
- * it holds no more references. A box with no JS attached is left untouched.
+ * Remove a box's JS wiring: strip the `id` from the element and the box's own
+ * `const … = document.getElementById('<id>')` line from the script. Everything
+ * else in the script is the user's code and stays put — the `<script>` block is
+ * only dropped when nothing but whitespace is left inside it. A box with no JS
+ * attached is left untouched.
  */
 export function detachJs(source: string, handle: string): { source: string } {
   const boxes = scanBoxes(source)
@@ -368,19 +370,26 @@ export function detachJs(source: string, handle: string): { source: string } {
   const newTag = raw.openTag.replace(/\s+id="[^"]*"/, '')
   let out = source.slice(0, raw.openStart) + newTag + source.slice(raw.openEnd)
 
-  // 2. Remove the const line that references this id.
+  // 2. Remove the const line that references this id — and only that line.
   const line = new RegExp(
     `[ \\t]*const [^\\n]*getElementById\\((['"])${escapeRegExp(id)}\\1\\)[^\\n]*\\n`,
   )
-  out = out.replace(line, '')
+  const hit = line.exec(out)
+  if (!hit) return { source: out }
+  out = out.slice(0, hit.index) + out.slice(hit.index + hit[0].length)
 
-  // 3. Drop the shared script entirely once it has no more const wiring.
-  const open = out.indexOf('<script>')
-  const close = out.indexOf('</script>')
-  if (open !== -1 && close !== -1) {
-    const inner = out.slice(open + '<script>'.length, close)
-    if (!inner.includes('const ')) {
-      out = out.replace(/[ \t]*<script>[\s\S]*?<\/script>\n?/, '')
+  // 3. Drop the script that held it, but only if it is now empty. Judging by
+  //    "no more `const`" would delete user code written any other way.
+  const open = out.lastIndexOf('<script', hit.index)
+  const openEnd = open === -1 ? -1 : out.indexOf('>', open) + 1
+  const close = out.indexOf('</script>', hit.index)
+  if (open !== -1 && close !== -1 && openEnd <= close) {
+    if (out.slice(openEnd, close).trim() === '') {
+      const lineStart = out.lastIndexOf('\n', open) + 1
+      const from = /^[ \t]*$/.test(out.slice(lineStart, open)) ? lineStart : open
+      let to = close + '</script>'.length
+      if (out[to] === '\n') to += 1
+      out = out.slice(0, from) + out.slice(to)
     }
   }
   return { source: out }

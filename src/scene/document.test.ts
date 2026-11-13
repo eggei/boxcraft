@@ -394,6 +394,54 @@ describe('detachJs', () => {
     const source = withBoxes(1)
     expect(detachJs(source, listBoxes(source)[0].handle).source).toBe(source)
   })
+
+  it('keeps the script when user code without `const` remains in it', () => {
+    const base = withBoxes(1)
+    const handle = listBoxes(base)[0].handle
+    // The user's own code below the wiring, written without any `const`.
+    const attached = attachJs(base, handle).source.replace(
+      '</script>',
+      "  box1.addEventListener('click', () => alert('hi'));\n    </script>",
+    )
+
+    const { source: detached } = detachJs(attached, handle)
+
+    expect(detached).not.toContain("getElementById('box-1')")
+    const scripts = parse(detached).querySelectorAll('script')
+    expect(scripts).toHaveLength(1)
+    expect(scripts[0].textContent).toContain("box1.addEventListener('click'")
+  })
+
+  it('keeps the script while another box is still wired', () => {
+    let source = withBoxes(2)
+    const [b1, b2] = listBoxes(source)
+    source = attachJs(source, b1.handle).source
+    source = attachJs(source, b2.handle).source
+
+    // Detach both, one at a time: the script survives the first, not the last.
+    const once = detachJs(source, b2.handle).source
+    expect(parse(once).querySelectorAll('script')).toHaveLength(1)
+    expect(once).toContain("getElementById('box-1')")
+
+    const twice = detachJs(once, b1.handle).source
+    expect(parse(twice).querySelectorAll('script')).toHaveLength(0)
+    // Removing the block leaves no blank line where it stood.
+    expect(twice).not.toMatch(/\n[ \t]*\n[ \t]*<\/body>/)
+  })
+
+  it('removes only its own wiring line, never other getElementById lines', () => {
+    const base = withBoxes(1)
+    const handle = listBoxes(base)[0].handle
+    const attached = attachJs(base, handle).source.replace(
+      '</script>',
+      "  const title = document.getElementById('title');\n    </script>",
+    )
+
+    const { source: detached } = detachJs(attached, handle)
+
+    expect(detached).not.toContain("getElementById('box-1')")
+    expect(detached).toContain("const title = document.getElementById('title');")
+  })
 })
 
 describe('rename with JS attached', () => {
