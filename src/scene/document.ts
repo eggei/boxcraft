@@ -137,6 +137,26 @@ export function listBoxes(source: string): Box[] {
   }))
 }
 
+/**
+ * Carry a handle from one version of the source to another. Handles are
+ * positional, so while the render lags the editor (see the stage's debounce) a
+ * click on the rendered copy names a box by its place in *that* source. The
+ * box is matched by identity class first — a box typed in above it shifts
+ * every index after it — and by position only when it has no class to go by.
+ * Null when the box has no counterpart in `to`.
+ */
+export function translateHandle(from: string, to: string, handle: string): string | null {
+  if (from === to) return handle
+  const box = listBoxes(from).find((b) => b.handle === handle)
+  if (!box) return null
+  const targets = listBoxes(to)
+  if (box.className) {
+    return targets.find((b) => b.className === box.className)?.handle ?? null
+  }
+  const same = targets.find((b) => b.handle === handle)
+  return same && !same.className ? same.handle : null
+}
+
 export interface TokenRange {
   from: number
   to: number

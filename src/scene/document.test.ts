@@ -12,6 +12,7 @@ import {
   resolveTokens,
   ruleRangeOf,
   serialize,
+  translateHandle,
 } from './document'
 
 /** DEFAULT_SOURCE with `n` boxes created in order, for identity-layer tests. */
@@ -433,5 +434,40 @@ describe('rename with JS attached', () => {
     expect(resolveTokens(orphaned).find((t) => t.className === 'box-1')?.resolved).toBe(
       false,
     )
+  })
+})
+
+describe('translateHandle', () => {
+  it('is the identity when the source has not changed', () => {
+    const source = withBoxes(2)
+    expect(translateHandle(source, source, 'bx_2')).toBe('bx_2')
+  })
+
+  it('follows a box by class when a box typed in above it shifts the indices', () => {
+    const before = withBoxes(2) // box-1, box-2
+    const after = before.replace(
+      '<div class="box-1">',
+      '<div class="extra"></div>\n      <div class="box-1">',
+    )
+    expect(listBoxes(after).map((b) => b.className)).toEqual(['extra', 'box-1', 'box-2'])
+
+    expect(translateHandle(before, after, 'bx_2')).toBe('bx_3')
+    expect(translateHandle(after, before, 'bx_3')).toBe('bx_2')
+  })
+
+  it('is null when the box is gone from the other source', () => {
+    const before = withBoxes(2)
+    const after = before.replace(/\s*<div class="box-2"><\/div>/, '')
+    expect(translateHandle(before, after, 'bx_2')).toBeNull()
+    expect(translateHandle(before, after, 'bx_9')).toBeNull()
+  })
+
+  it('falls back to position for a box with no class', () => {
+    const before = DEFAULT_SOURCE.replace(
+      '<div class="canvas"></div>',
+      '<div class="canvas"><div></div></div>',
+    )
+    const after = before.replace('</style>', '.x { }</style>')
+    expect(translateHandle(before, after, 'bx_1')).toBe('bx_1')
   })
 })

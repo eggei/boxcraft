@@ -7,7 +7,8 @@ import { EditorSettingsMenu } from "./EditorSettingsMenu";
 import { SceneEditor, type SceneEditorHandle } from "./SceneEditor";
 import { SceneStage } from "./SceneStage";
 import { Toolbar, type Tool } from "./Toolbar";
-import { listBoxes, type BoxPlacement } from "./document";
+import { listBoxes, translateHandle, type BoxPlacement } from "./document";
+import { usePreviewSource } from "./usePreviewSource";
 
 /**
  * The L3 editing surface for a single scene: the CodeMirror source on one side
@@ -33,28 +34,67 @@ export function SceneEditorPane({
   const { settings, toggleAutoFormat, toggleVimMode, toggleEditorSide } = useEditorSettings();
   const codeOnRight = settings.editorSide === "right";
 
+  // The stage renders a copy of the source that trails typing by a moment (see
+  // usePreviewSource). Tool edits go through `asToolEdit`, which shows their
+  // result at once: the editor reports the new source synchronously from inside
+  // the call, and `handleChange` sees the flag while it is still up.
+  const [previewSource, showNow] = usePreviewSource(source);
+  const toolEditRef = useRef(false);
+
+  function handleChange(next: string) {
+    onChange(next);
+    if (toolEditRef.current) showNow(next);
+  }
+
+  function asToolEdit(edit: () => void) {
+    toolEditRef.current = true;
+    try {
+      edit();
+    } finally {
+      toolEditRef.current = false;
+    }
+  }
+
+  // Handles are positional, so the stage's (from the rendered copy) and the
+  // editor's (from the live source) can disagree while the render lags. They
+  // are translated at the boundary, in both directions.
+  const fromStage = (handle: string) => translateHandle(previewSource, source, handle);
+  const stageSelectedHandle =
+    selectedHandle && translateHandle(source, previewSource, selectedHandle);
+
   function handleCreateBox(placement: BoxPlacement) {
-    editorRef.current?.createBox(placement);
+    asToolEdit(() => editorRef.current?.createBox(placement));
     setTool("select"); // tool reverts to Select after creation
   }
 
-  function handleSelectBox(handle: string) {
+  function selectBox(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.selectBox(handle);
+    asToolEdit(() => editorRef.current?.selectBox(handle));
   }
 
-  function handleAttachJs(handle: string) {
+  function attachJsTo(handle: string) {
     setSelectedHandle(handle);
-    editorRef.current?.attachJs(handle);
+    asToolEdit(() => editorRef.current?.attachJs(handle));
     setTool("select"); // tool reverts to Select after attaching
   }
 
+  function handleStageSelect(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) selectBox(handle);
+  }
+
+  function handleStageAttachJs(stageHandle: string) {
+    const handle = fromStage(stageHandle);
+    if (handle) attachJsTo(handle);
+  }
+
   function handleDetachJs() {
-    if (selectedHandle) editorRef.current?.detachJs(selectedHandle);
+    const handle = selectedHandle;
+    if (handle) asToolEdit(() => editorRef.current?.detachJs(handle));
   }
 
   function handleFormat() {
-    editorRef.current?.format();
+    asToolEdit(() => editorRef.current?.format());
   }
 
   // ⌥F formats from anywhere on the editing surface, including from inside the
@@ -69,7 +109,7 @@ export function SceneEditorPane({
       if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
       // Cancels the "ƒ" the editor would otherwise be handed.
       event.preventDefault();
-      editorRef.current?.format();
+      asToolEdit(() => editorRef.current?.format());
     }
     window.addEventListener("keydown", onKeyDown);
     return function unbind() {
@@ -83,7 +123,7 @@ export function SceneEditorPane({
     if (!box) return;
     const next = window.prompt("Rename box", box.className)?.trim();
     if (!next || next === box.className) return;
-    editorRef.current?.renameBox(selectedHandle, next);
+    asToolEdit(() => editorRef.current?.renameBox(selectedHandle, next));
   }
 
   const selectedBox = selectedHandle
@@ -105,7 +145,7 @@ export function SceneEditorPane({
         <SceneEditor
           ref={editorRef}
           value={source}
-          onChange={onChange}
+          onChange={handleChange}
           onCursorBox={setSelectedHandle}
           autoFormat={settings.autoFormat}
           vimMode={settings.vimMode}
@@ -137,12 +177,12 @@ export function SceneEditorPane({
       </div>
       <div className={cn("relative min-h-0", codeOnRight ? "order-1" : "order-2")}>
         <SceneStage
-          source={source}
+          source={previewSource}
           tool={tool}
-          selectedHandle={selectedHandle}
+          selectedHandle={stageSelectedHandle || null}
           onCreateBox={handleCreateBox}
-          onSelectBox={handleSelectBox}
-          onAttachJs={handleAttachJs}
+          onSelectBox={handleStageSelect}
+          onAttachJs={handleStageAttachJs}
         />
         {selectedBox && (
           <div className="bg-popover shadow-raised absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
@@ -167,7 +207,7 @@ export function SceneEditorPane({
             >
               <button
                 type="button"
-                onClick={selectedHasJs ? handleDetachJs : () => handleAttachJs(selectedHandle!)}
+                onClick={selectedHasJs ? handleDetachJs : () => attachJsTo(selectedHandle!)}
                 className="hover:bg-muted rounded-md border px-2 py-1"
               >
                 {selectedHasJs ? "Detach JS" : "Attach JS"}
