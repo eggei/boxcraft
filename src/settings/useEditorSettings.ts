@@ -1,26 +1,27 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState } from "react";
 import {
   EDITOR_SETTINGS_KEY,
   parseEditorSettings,
   serializeEditorSettings,
   toggleAutoFormat,
   toggleEditorSide,
+  toggleVimMode,
   type EditorSettings,
-} from './editorSettings'
+} from "./editorSettings";
 
 // Storage can throw (private mode, blocked cookies); a missing preference is
 // never worth failing the app over, so both directions degrade to no-op.
 function readStored(): string | null {
   try {
-    return localStorage.getItem(EDITOR_SETTINGS_KEY)
+    return localStorage.getItem(EDITOR_SETTINGS_KEY);
   } catch {
-    return null
+    return null;
   }
 }
 
 function store(settings: EditorSettings) {
   try {
-    localStorage.setItem(EDITOR_SETTINGS_KEY, serializeEditorSettings(settings))
+    localStorage.setItem(EDITOR_SETTINGS_KEY, serializeEditorSettings(settings));
   } catch {
     // ignore
   }
@@ -34,22 +35,21 @@ function store(settings: EditorSettings) {
  */
 export function useEditorSettings() {
   const [settings, setSettings] = useState<EditorSettings>(function resolveInitial() {
-    return parseEditorSettings(readStored())
-  })
+    return parseEditorSettings(readStored());
+  });
 
-  const update = useCallback(function update(
-    change: (current: EditorSettings) => EditorSettings,
-  ) {
+  const update = useCallback(function update(change: (current: EditorSettings) => EditorSettings) {
     setSettings(function apply(current) {
-      const next = change(current)
-      store(next)
-      return next
-    })
-  }, [])
+      const next = change(current);
+      store(next);
+      return next;
+    });
+  }, []);
 
   return {
     settings,
     toggleAutoFormat: useCallback(() => update(toggleAutoFormat), [update]),
     toggleEditorSide: useCallback(() => update(toggleEditorSide), [update]),
-  }
+    toggleVimMode: useCallback(() => update(toggleVimMode), [update]),
+  };
 }

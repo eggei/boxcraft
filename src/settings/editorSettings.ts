@@ -5,27 +5,32 @@
 // stored blob and flipping a field. No storage, no DOM, no React; the adapter
 // hook does all of that, exactly as the theme module is arranged.
 
-export const EDITOR_SIDES = ['left', 'right'] as const
+export const EDITOR_SIDES = ["left", "right"] as const;
 
 /** Which half of the split the code lives in; the stage takes the other. */
-export type EditorSide = (typeof EDITOR_SIDES)[number]
+export type EditorSide = (typeof EDITOR_SIDES)[number];
 
 export interface EditorSettings {
   /** Re-indent the source when the editor loses focus. */
-  autoFormat: boolean
-  editorSide: EditorSide
+  autoFormat: boolean;
+  editorSide: EditorSide;
+  /** Modal, Vim-style keybindings in the source editor. */
+  vimMode: boolean;
 }
 
 /** Storage key holding the user's preferences, if they have changed any. */
-export const EDITOR_SETTINGS_KEY = 'boxcraft:editor-settings'
+export const EDITOR_SETTINGS_KEY = "boxcraft:editor-settings";
 
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoFormat: true,
-  editorSide: 'left',
-}
+  editorSide: "left",
+  // Opt-in: modal editing changes what every key does, so nobody should land
+  // in it without having asked.
+  vimMode: false,
+};
 
 function isEditorSide(value: unknown): value is EditorSide {
-  return EDITOR_SIDES.includes(value as EditorSide)
+  return EDITOR_SIDES.includes(value as EditorSide);
 }
 
 /**
@@ -34,37 +39,37 @@ function isEditorSide(value: unknown): value is EditorSide {
  * is worth exactly one default, not a reset of the rest.
  */
 export function parseEditorSettings(raw: string | null): EditorSettings {
-  let stored: unknown
+  let stored: unknown;
   try {
-    stored = raw === null ? null : JSON.parse(raw)
+    stored = raw === null ? null : JSON.parse(raw);
   } catch {
-    return DEFAULT_EDITOR_SETTINGS
+    return DEFAULT_EDITOR_SETTINGS;
   }
-  if (typeof stored !== 'object' || stored === null) return DEFAULT_EDITOR_SETTINGS
+  if (typeof stored !== "object" || stored === null) return DEFAULT_EDITOR_SETTINGS;
 
-  const { autoFormat, editorSide } = stored as Partial<EditorSettings>
+  const { autoFormat, editorSide, vimMode } = stored as Partial<EditorSettings>;
   return {
-    autoFormat:
-      typeof autoFormat === 'boolean'
-        ? autoFormat
-        : DEFAULT_EDITOR_SETTINGS.autoFormat,
-    editorSide: isEditorSide(editorSide)
-      ? editorSide
-      : DEFAULT_EDITOR_SETTINGS.editorSide,
-  }
+    autoFormat: typeof autoFormat === "boolean" ? autoFormat : DEFAULT_EDITOR_SETTINGS.autoFormat,
+    editorSide: isEditorSide(editorSide) ? editorSide : DEFAULT_EDITOR_SETTINGS.editorSide,
+    vimMode: typeof vimMode === "boolean" ? vimMode : DEFAULT_EDITOR_SETTINGS.vimMode,
+  };
 }
 
 export function serializeEditorSettings(settings: EditorSettings): string {
-  return JSON.stringify(settings)
+  return JSON.stringify(settings);
 }
 
 export function toggleAutoFormat(settings: EditorSettings): EditorSettings {
-  return { ...settings, autoFormat: !settings.autoFormat }
+  return { ...settings, autoFormat: !settings.autoFormat };
+}
+
+export function toggleVimMode(settings: EditorSettings): EditorSettings {
+  return { ...settings, vimMode: !settings.vimMode };
 }
 
 export function toggleEditorSide(settings: EditorSettings): EditorSettings {
   return {
     ...settings,
-    editorSide: settings.editorSide === 'left' ? 'right' : 'left',
-  }
+    editorSide: settings.editorSide === "left" ? "right" : "left",
+  };
 }

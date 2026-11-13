@@ -1,5 +1,5 @@
-import { Settings } from 'lucide-react'
-import { WithTooltip } from '@/components/ui/tooltip'
+import { Settings } from "lucide-react";
+import { WithTooltip } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -8,13 +8,14 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import type { EditorSettings } from '@/settings/editorSettings'
+} from "@/components/ui/dropdown-menu";
+import type { EditorSettings } from "@/settings/editorSettings";
 
 interface EditorSettingsMenuProps {
-  settings: EditorSettings
-  onToggleAutoFormat: () => void
-  onToggleEditorSide: () => void
+  settings: EditorSettings;
+  onToggleAutoFormat: () => void;
+  onToggleVimMode: () => void;
+  onToggleEditorSide: () => void;
 }
 
 /**
@@ -26,11 +27,12 @@ interface EditorSettingsMenuProps {
 export function EditorSettingsMenu({
   settings,
   onToggleAutoFormat,
+  onToggleVimMode,
   onToggleEditorSide,
 }: EditorSettingsMenuProps) {
   return (
     <DropdownMenu>
-      <WithTooltip side="left" tip="Editor settings — formatting and layout">
+      <WithTooltip side="left" tip="Editor settings — formatting, keybindings and layout">
         <DropdownMenuTrigger
           aria-label="Editor settings"
           className="bg-popover shadow-raised text-muted-foreground hover:text-foreground flex size-9 items-center justify-center rounded-lg border transition-colors"
@@ -56,17 +58,25 @@ export function EditorSettingsMenu({
             </span>
           </span>
         </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem checked={settings.vimMode} onCheckedChange={onToggleVimMode}>
+          <span className="flex flex-col">
+            Vim mode
+            {/* Esc is Vim's, not the app's, once this is on — worth saying
+                where it went, since "Exit (Esc)" sits in the header. */}
+            <span className="text-muted-foreground text-xs">
+              Modal keys in the source · :q to exit
+            </span>
+          </span>
+        </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Layout</DropdownMenuLabel>
         {/* Not a checkbox: the two sides are equal choices, not a state that is
             on or off. The label names where the code is going, so the item
             reads as the move it performs rather than as where things stand. */}
         <DropdownMenuItem onSelect={onToggleEditorSide}>
-          {settings.editorSide === 'right'
-            ? 'Code on the left'
-            : 'Code on the right'}
+          {settings.editorSide === "right" ? "Code on the left" : "Code on the right"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }
